@@ -355,7 +355,8 @@ class LlamaCppAdapter(RuntimeAdapter):
                 args.extend(["--spec-draft-n-max", str(plan.draft_length)])
 
         # Flash attention if available (improves performance on modern GPUs)
-        args.append("--flash-attn")
+        # Newer llama.cpp requires a value: on|off|auto
+        args.extend(["--flash-attn", "auto"])
 
         return args
 
@@ -423,6 +424,10 @@ def find_llama_server() -> str:
     # Check vendor directory (relative to project root)
     project_root = Path(__file__).parent.parent.parent.parent
     vendor_paths = [
+        # Pre-built release extracted directly into vendor/llama.cpp/
+        project_root / "vendor" / "llama.cpp" / "llama-server",
+        project_root / "vendor" / "llama.cpp" / "llama-server.exe",
+        # Source build in vendor/llama.cpp/build/bin/
         project_root / "vendor" / "llama.cpp" / "build" / "bin" / "llama-server",
         project_root / "vendor" / "llama.cpp" / "build" / "bin" / "llama-server.exe",
     ]
@@ -452,6 +457,9 @@ def find_llama_server() -> str:
             / "bin" / "Release" / "llama-server.exe"
         )
         common_win.insert(0, vendor_release)
+        # Also check vendor directory directly (pre-built release extraction)
+        vendor_direct = project_root / "vendor" / "llama.cpp" / "llama-server.exe"
+        common_win.insert(0, vendor_direct)
 
         for p in common_win:
             if p.exists():
