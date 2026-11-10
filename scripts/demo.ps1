@@ -16,6 +16,8 @@ param(
 
     [string]$Draft = "",
 
+    [string]$BackendPath = "",
+
     [int]$Context = 8192,
     [int]$Runs = 3,
     [int]$Tokens = 128
@@ -52,18 +54,17 @@ adhie estimate $Model --context $Context
 
 # ─── Step 5: Baseline Benchmark (CPU-only) ───────────────────────
 Write-Divider "Step 5/7: Baseline Benchmark (CPU-only)"
-adhie benchmark $Model `
-    --context $Context `
-    --mode baseline `
-    --runs $Runs `
-    --tokens $Tokens `
-    -o $ResultsDir
+$baseArgs = @("benchmark", $Model, "--context", $Context, "--mode", "baseline",
+              "--runs", $Runs, "--tokens", $Tokens, "-o", $ResultsDir)
+if ($BackendPath) { $baseArgs += @("--backend-path", $BackendPath) }
+& adhie @baseArgs
 
 # ─── Step 6: ADHIE-optimised Benchmark ──────────────────────────
 Write-Divider "Step 6/7: ADHIE-optimised Benchmark"
 $benchArgs = @("benchmark", $Model, "--context", $Context, "--mode", "auto",
                "--runs", $Runs, "--tokens", $Tokens, "-o", $ResultsDir)
 if ($Draft) { $benchArgs += @("--draft", $Draft) }
+if ($BackendPath) { $benchArgs += @("--backend-path", $BackendPath) }
 & adhie @benchArgs
 
 # ─── Step 7: Comparison ─────────────────────────────────────────
@@ -81,12 +82,10 @@ if ($resultFiles.Count -ge 1) {
 # ─── Optional: Ablation Study ───────────────────────────────────
 if ($Draft) {
     Write-Divider "Bonus: Ablation Study"
-    adhie ablation $Model `
-        --draft $Draft `
-        --context $Context `
-        --runs $Runs `
-        --tokens $Tokens `
-        -o "$ResultsDir\ablation"
+    $ablArgs = @("ablation", $Model, "--draft", $Draft, "--context", $Context,
+                 "--runs", $Runs, "--tokens", $Tokens, "-o", "$ResultsDir\ablation")
+    if ($BackendPath) { $ablArgs += @("--backend-path", $BackendPath) }
+    & adhie @ablArgs
 }
 
 # ─── Summary ────────────────────────────────────────────────────

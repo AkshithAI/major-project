@@ -273,6 +273,124 @@ def run(model_ref: str, context: int, draft: str | None,
         console.print("\n[yellow]Interrupted.[/yellow]")
     finally:
         adapter.unload()
+
+
+@cli.command()
+@click.argument("model_ref")
+@click.option("--context", "-c", default=8192, help="Context length")
+@click.option("--draft", "-d", default=None, help="Draft model (path or HF repo)")
+@click.option("--backend-path", default=None, help="Path to llama-server binary")
+@click.option("--top-n", default=3, help="Number of candidates to benchmark")
+@click.option("--runs", "-r", default=2, help="Timed runs per candidate")
+@click.option("--tokens", "-t", default=64, help="Output tokens per run")
+@click.option("--output", "-o", default=None, help="Save selected plan to YAML")
+def autotune(model_ref: str, context: int, draft: str | None,
+             backend_path: str | None, top_n: int, runs: int,
+             tokens: int, output: str | None) -> None:
+    """Autotune: benchmark top-N plans and select the best.
+
+    Profiles hardware, generates candidates, benchmarks the top plans,
+    and selects the configuration with the best throughput/latency trade-off.
+
+    MODEL_REF can be a local path or HuggingFace repo ID.
+    """
+    from pathlib import Path
+    from adhie.profiler.hardware_profiler import HardwareProfiler
+    from adhie.inspector.model_inspector import ModelInspector
+    from adhie.planner.plan_generator import PlanGenerator
+    from adhie.planner.autotuner import Autotuner
+    from adhie.planner.profile_cache import ProfileCache
+    from adhie.runtime.llamacpp_adapter import LlamaCppAdapter, find_llama_server
+    from adhie.benchmark.runner import BenchmarkRunner
+    from adhie.types import WorkloadConfig
+
+    console.print("[bold blue]ADHIE Autotuner[/bold blue]")
+    console.print(f"Top-N: {top_n} | Runs: {runs} | Tokens: {tokens}")
+    console.print()
+
+    # Resolve models
+    model_path = _resolve_model(model_ref)
+    draft_path = _resolve_model(draft) if draft else None
+
+    # Profile & inspect
+    hw = HardwareProfiler(verbose=False).profile()
+    model = ModelInspector().inspect(model_path)
+    if draft_path:
+        model.draft_model_path = draft_path
+
+    console.print(f"[dim]GPU: {hw.gpu_name or 'None'} | "
+                  f"VRAM: {hw.vram_free_bytes / 1e9:.1f} GB | "
+                  f"RAM: {hw.ram_available_bytes / 1e9:.1f} GB[/dim]")
+    console.print(f"[dim]Model: {model.model_id} ({model.parameter_count / 1e9:.1f}B)[/dim]")
+    console.print()
+
+    # Generate candidates
+    workload = WorkloadConfig(context_length=context, output_tokens=tokens)
+    generator = PlanGenerator()
+    candidates = generator.generate_candidates(hw, model, workload)
+
+    if not candidates:
+        console.print("[bold red]No feasible plans found![/bold red]")
+        raise SystemExit(1)
+
+    console.print(f"[bold]Generated {len(candidates)} candidates, "
+                  f"benchmarking top {min(top_n, len(candidates))}...[/bold]")
+    console.print()
+
+    # Setup backend
+    server_path = backend_path or find_llama_server()
+    adapter = LlamaCppAdapter(server_path)
+    runner = BenchmarkRunner(adapter, warmup_runs=1, timed_runs=runs)
+
+    # Run autotuner
+    cache = ProfileCache()
+    autotuner = Autotuner(
+        runner=runner,
+        adapter=adapter,
+        cache=cache,
+        top_n=top_n,
+        console=console,
+    )
+
+    try:
+        best_plan, results = autotuner.autotune(
+            candidates=candidates,
+            hardware_profile=hw,
+            model_profile=model,
+            workload=workload,
+        )
+
+        console.print()
+        console.print("[bold green]━━━ Best Plan Selected ━━━[/bold green]")
+        console.print(f"  Plan ID:      {best_plan.plan_id}")
+        console.print(f"  Mode:         {best_plan.execution_mode}")
+        console.print(f"  GPU layers:   {best_plan.gpu_layers}/{model.layer_count}")
+        console.print(f"  KV type:      {best_plan.kv_type_k}")
+        console.print(f"  KV offload:   {'Yes' if best_plan.kv_offload else 'No'}")
+        console.print(f"  Rationale:    {best_plan.rationale}")
+
+        if results:
+            best_result = results[0]
+            console.print()
+            console.print(f"  [bold]Performance:[/bold]")
+            console.print(f"    TPOT:    {best_result.metrics.tpot_ms:.1f} ms")
+            console.print(f"    tok/s:   {best_result.metrics.output_tokens_per_s:.1f}")
+            console.print(f"    TTFT:    {best_result.metrics.ttft_ms:.0f} ms")
+
+        if output:
+            import yaml
+            from dataclasses import asdict
+            Path(output).parent.mkdir(parents=True, exist_ok=True)
+            with open(output, "w") as f:
+                yaml.dump(asdict(best_plan), f, default_flow_style=False)
+            console.print(f"\n[green]Plan saved to {output}[/green]")
+
+        # Cache the result
+        cache.save_profile(hw, model, workload, best_plan)
+        console.print(f"\n[dim]Profile cached for future runs.[/dim]")
+
+    finally:
+        adapter.unload()
         console.print("[dim]Server stopped.[/dim]")
 
 

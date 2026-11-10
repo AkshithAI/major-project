@@ -1,64 +1,79 @@
-# Benchmark Workload Configuration — Default
-# Used for baseline and ADHIE comparison runs
+# Default Benchmark Workloads
+# Each workload defines a prompt, context length, and output token count.
 
-prompts:
-  short:
-    name: "Short context (code completion)"
-    token_count: ~2000
-    text: |
-      You are an expert Python developer. Write a comprehensive implementation
-      of a binary search tree with the following methods: insert, delete, search,
-      in-order traversal, pre-order traversal, post-order traversal, find minimum,
-      find maximum, height calculation, and balance checking. Include proper error
-      handling and type hints. Add docstrings for every method.
+workloads:
+  - name: short_general
+    description: "Short general knowledge prompt (~2K context)"
+    context_length: 2048
+    output_tokens: 128
+    prompt: >
+      Write a comprehensive explanation of how heterogeneous CPU and GPU
+      computing works for large language model inference, covering memory
+      management, layer placement, and speculative decoding.
 
-  medium:
-    name: "Medium context (analysis)"
-    token_count: ~4000
-    text: |
-      Analyze the following system architecture for a distributed key-value store
-      and provide a detailed critique covering consistency guarantees, fault tolerance,
-      scalability bottlenecks, and suggested improvements.
+  - name: medium_technical
+    description: "Medium technical explanation (~8K context)"
+    context_length: 8192
+    output_tokens: 128
+    prompt: >
+      You are an expert in computer architecture and machine learning systems.
+      Explain in detail how modern large language models perform inference on
+      consumer hardware with limited GPU memory. Cover the following topics:
+      1. How transformer attention mechanisms work and their memory requirements
+      2. The role of KV cache and how its size scales with context length
+      3. GPU layer offloading strategies — when to place layers on GPU vs CPU
+      4. Quantization formats (FP16, Q8_0, Q4_K_M) and their trade-offs
+      5. Speculative decoding with a smaller draft model
+      6. Memory bandwidth bottlenecks on PCIe buses
+      Provide specific numbers and formulas where applicable.
 
-      The system uses a leader-follower replication model with the following components:
-      1. Client Gateway: Receives all read/write requests, routes writes to the leader.
-      2. Leader Node: Processes all writes, maintains a write-ahead log (WAL), replicates
-         to followers using synchronous replication for strong consistency.
-      3. Follower Nodes (3 replicas): Receive replicated writes from the leader, serve
-         read requests with read-your-writes consistency using session tokens.
-      4. Metadata Service: Stores cluster membership, partition map, and leader election
-         state using a Raft consensus group.
-      5. Partition Manager: Handles range-based partitioning with dynamic split/merge
-         based on partition size thresholds (256MB-1GB per partition).
+  - name: medium_creative
+    description: "Medium creative writing (~8K context)"
+    context_length: 8192
+    output_tokens: 256
+    prompt: >
+      Write a detailed short story about a computer scientist who discovers
+      that their AI system has learned to optimize its own inference pipeline.
+      The story should explore themes of efficiency, intelligence, and the
+      boundary between tool and creator. Include technical details about
+      GPU memory management and model quantization woven naturally into
+      the narrative.
 
-      Key design decisions:
-      - Synchronous replication to 2 of 3 followers before acknowledging writes
-      - Read-your-writes consistency using logical timestamps in session tokens
-      - Leader election via the metadata service Raft group with 5-second timeout
-      - Data stored in LSM-tree based storage engine with bloom filters
-      - Cross-partition transactions use 2PC with the leader as coordinator
-      - Compaction runs in background threads with rate limiting to avoid I/O spikes
+  - name: long_analysis
+    description: "Long analytical prompt (~16K context)"
+    context_length: 16384
+    output_tokens: 256
+    prompt: >
+      Provide an exhaustive technical analysis comparing the following
+      approaches to running large language models on consumer hardware:
 
-      Provide your analysis in the following structure:
-      1. Consistency Analysis
-      2. Availability and Fault Tolerance
-      3. Scalability Assessment
-      4. Performance Bottlenecks
-      5. Security Considerations
-      6. Recommended Improvements (prioritized)
+      Approach 1: Full GPU Offloading
+      - All model layers on GPU
+      - KV cache in VRAM
+      - Limited by VRAM capacity
 
-output_lengths:
-  - 128
-  - 256
+      Approach 2: Hybrid CPU-GPU Split
+      - Critical layers on GPU, remainder on CPU
+      - KV cache optionally offloaded to system RAM
+      - Requires efficient PCIe transfer
 
-generation:
-  temperature: 0.0
-  top_p: 1.0
-  seed: 42
-  repeat_penalty: 1.0
+      Approach 3: CPU-Only with Optimizations
+      - All layers on CPU with AVX2/AVX-512 SIMD
+      - Large system RAM as advantage
+      - No VRAM constraints
 
-benchmark:
-  warmup_requests: 2
-  timed_requests: 3
-  cooldown_seconds: 5
+      Approach 4: Speculative Decoding
+      - Small draft model on CPU
+      - Large target model on GPU
+      - Acceptance/rejection verification overhead
 
+      For each approach, analyze:
+      a) Memory requirements for a 14B parameter Q4_K_M model
+      b) Expected throughput in tokens per second
+      c) Time to first token (TTFT)
+      d) Scaling behavior with context length
+      e) Optimal hardware configurations
+      f) When this approach is preferred over alternatives
+
+      Conclude with a decision framework for selecting the best approach
+      given specific hardware constraints.

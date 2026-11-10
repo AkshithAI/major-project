@@ -35,6 +35,9 @@ dev = [
     "ruff>=0.1",
     "mypy>=1.0",
 ]
+plots = [
+    "matplotlib>=3.7",
+]
 
 [project.scripts]
 adhie = "adhie.cli.main:cli"

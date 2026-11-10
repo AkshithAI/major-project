@@ -439,16 +439,32 @@ def find_llama_server() -> str:
     if platform.system() == "Windows":
         common_win = [
             Path.home() / "llama.cpp" / "build" / "bin" / "Release" / "llama-server.exe",
+            Path.home() / "llama.cpp" / "build" / "bin" / "llama-server.exe",
             Path("C:/llama.cpp/build/bin/Release/llama-server.exe"),
+            Path("C:/llama.cpp/build/bin/llama-server.exe"),
+            # Scoop / winget / chocolatey common locations
+            Path.home() / "scoop" / "shims" / "llama-server.exe",
+            Path("C:/ProgramData/chocolatey/bin/llama-server.exe"),
         ]
+        # Also check the project vendor directory with Release subdir
+        vendor_release = (
+            project_root / "vendor" / "llama.cpp" / "build"
+            / "bin" / "Release" / "llama-server.exe"
+        )
+        common_win.insert(0, vendor_release)
+
         for p in common_win:
             if p.exists():
                 return str(p)
 
     raise FileNotFoundError(
         "llama-server not found. Either:\n"
-        "  1. Run ./scripts/setup_backend.sh to build it, or\n"
-        "  2. Install llama.cpp and ensure llama-server is on PATH, or\n"
+        "  1. Download a pre-built release from:\n"
+        "     https://github.com/ggml-org/llama.cpp/releases\n"
+        "     and add llama-server to PATH, or\n"
+        "  2. Build from source:\n"
+        "     Linux/macOS: ./scripts/setup_backend.sh\n"
+        "     Windows:     .\\scripts\\setup_backend.ps1\n"
         "  3. Pass --backend-path /path/to/llama-server"
     )
 
