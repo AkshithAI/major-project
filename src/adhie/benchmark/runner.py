@@ -103,8 +103,8 @@ class BenchmarkRunner:
         )
 
         result = BenchmarkResult(
-            run_id=f"run-{datetime.datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}",
-            timestamp=datetime.datetime.utcnow().isoformat() + "Z",
+            run_id=f"run-{datetime.datetime.now(datetime.UTC).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}",
+            timestamp=datetime.datetime.now(datetime.UTC).isoformat(),
             hardware_fingerprint=hardware_profile.fingerprint() if hardware_profile else "unknown",
             model_fingerprint=model_profile.fingerprint() if model_profile else "unknown",
             plan=plan,

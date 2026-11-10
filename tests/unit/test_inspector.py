@@ -10,7 +10,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from adhie.inspector.model_inspector import ModelInspector, QUANT_TYPE_MAP
+from adhie.inspector.model_inspector import (
+    ModelInspector,
+    QUANT_TYPE_MAP,
+    _detect_split_shards,
+)
 from adhie.types import ModelProfile
 
 
@@ -208,3 +212,63 @@ class TestQuantTypeMap:
         assert name == "q4_k_m"
         assert bits == 4.8
 
+
+class TestDetectSplitShards:
+    """Test _detect_split_shards for split GGUF file detection."""
+
+    def test_non_split_returns_empty(self, tmp_path) -> None:
+        f = tmp_path / "model-q4_k_m.gguf"
+        f.write_bytes(b"\x00" * 10)
+        assert _detect_split_shards(str(f)) == []
+
+    def test_split_finds_all_shards(self, tmp_path) -> None:
+        """When all shards are present, returns sorted list."""
+        for i in range(1, 4):
+            f = tmp_path / f"model-q4_k_m-{i:05d}-of-00003.gguf"
+            f.write_bytes(b"\x00" * 10)
+        result = _detect_split_shards(
+            str(tmp_path / "model-q4_k_m-00001-of-00003.gguf")
+        )
+        assert len(result) == 3
+        assert "00001" in result[0]
+        assert "00003" in result[2]
+
+    def test_split_partial_shards(self, tmp_path) -> None:
+        """When only some shards exist, returns only existing ones."""
+        for i in [1, 3]:
+            f = tmp_path / f"model-q4_k_m-{i:05d}-of-00003.gguf"
+            f.write_bytes(b"\x00" * 10)
+        result = _detect_split_shards(
+            str(tmp_path / "model-q4_k_m-00001-of-00003.gguf")
+        )
+        assert len(result) == 2  # shards 1 and 3
+
+
+class TestRefineSplitQuant:
+    """Test _refine_split_quant corrects quant from filename."""
+
+    def test_corrects_wrong_quant(self) -> None:
+        inspector = ModelInspector()
+        profile = ModelProfile(weight_dtype="q3_k_m", bits_per_weight=3.9)
+        inspector._refine_split_quant(
+            profile,
+            "qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf",
+        )
+        assert profile.weight_dtype == "q4_k_m"
+        assert profile.bits_per_weight == 4.8
+
+    def test_no_change_when_correct(self) -> None:
+        inspector = ModelInspector()
+        profile = ModelProfile(weight_dtype="q4_k_m", bits_per_weight=4.8)
+        inspector._refine_split_quant(
+            profile,
+            "qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf",
+        )
+        assert profile.weight_dtype == "q4_k_m"
+
+    def test_no_quant_in_filename(self) -> None:
+        inspector = ModelInspector()
+        profile = ModelProfile(weight_dtype="q3_k_m", bits_per_weight=3.9)
+        inspector._refine_split_quant(profile, "model-custom-00001-of-00002.gguf")
+        # Should not change since we can't extract a quant from "custom"
+        assert profile.weight_dtype == "q3_k_m"

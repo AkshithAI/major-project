@@ -2,11 +2,15 @@
 
 Reads GGUF file headers to populate a ModelProfile with architecture,
 parameter count, attention config, quantization info, and tokenizer details.
+
+Handles split GGUF models (sharded) by reading metadata from shard 1 and
+aggregating tensor information across all shards when available.
 """
 
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from rich.console import Console
@@ -65,20 +69,69 @@ GGUF_METADATA_VALUE_TYPE = {
     12: "float64",
 }
 
+# Regex to detect split shard filenames
+_SPLIT_SHARD_RE = re.compile(
+    r"^(?P<stem>.+)-(?P<idx>\d{5})-of-(?P<total>\d{5})\.gguf$",
+    re.IGNORECASE,
+)
+
+
+def _detect_split_shards(model_path: str) -> list[str]:
+    """Given a shard path, find all sibling shards in the same directory.
+
+    Returns a sorted list of shard paths. If the file is not a split
+    shard, returns an empty list.
+    """
+    path = Path(model_path)
+    m = _SPLIT_SHARD_RE.match(path.name)
+    if not m:
+        return []
+
+    stem = m.group("stem")
+    total = int(m.group("total"))
+    parent = path.parent
+
+    shards = []
+    for i in range(1, total + 1):
+        shard_name = f"{stem}-{i:05d}-of-{total:05d}.gguf"
+        shard_path = parent / shard_name
+        if shard_path.exists():
+            shards.append(str(shard_path))
+
+    return sorted(shards)
+
 
 class ModelInspector:
     """Extract model metadata from GGUF files."""
 
     def inspect(self, model_path: str) -> ModelProfile:
-        """Read a GGUF file and return a ModelProfile."""
+        """Read a GGUF file and return a ModelProfile.
+
+        For split GGUF models, reads metadata from shard 1 (which contains
+        all KV metadata) and aggregates tensor information across all
+        available shards.
+        """
         path = Path(model_path)
         if not path.exists():
             raise FileNotFoundError(f"Model file not found: {model_path}")
         if not path.suffix.lower() == ".gguf":
             raise ValueError(f"Expected .gguf file, got: {path.suffix}")
 
-        file_size = path.stat().st_size
-        metadata = self._read_gguf_metadata(model_path)
+        # Detect if this is a split shard and find all siblings
+        split_shards = _detect_split_shards(model_path)
+        is_split = len(split_shards) > 0
+
+        if is_split:
+            # Calculate total file size across all shards
+            file_size = sum(Path(s).stat().st_size for s in split_shards)
+            # Read metadata from shard 1 (contains all KV metadata)
+            metadata = self._read_gguf_metadata(split_shards[0])
+
+            # Aggregate tensor info from all shards
+            self._aggregate_split_tensors(metadata, split_shards)
+        else:
+            file_size = path.stat().st_size
+            metadata = self._read_gguf_metadata(model_path)
 
         profile = ModelProfile(
             model_path=str(path.resolve()),
@@ -86,6 +139,12 @@ class ModelInspector:
         )
 
         self._populate_from_metadata(profile, metadata)
+
+        # For split models, try to infer the quant type from the filename
+        # if tensor-based detection gave the wrong result
+        if is_split:
+            self._refine_split_quant(profile, path.name)
+
         return profile
 
     def _read_gguf_metadata(self, model_path: str) -> dict:
@@ -100,17 +159,26 @@ class ModelInspector:
         reader = GGUFReader(model_path)
         metadata: dict = {}
 
+        # Modern gguf library: fields is a dict of name → GGUFField
         for field in reader.fields.values():
             name = field.name
             try:
-                # Try to extract a usable value
+                # Modern approach: try .data property first (gguf >= 0.9)
+                if hasattr(field, "data"):
+                    data = field.data
+                    if data is not None:
+                        # ndarray/bytes → try to get a scalar or string
+                        val = self._extract_field_value(data)
+                        if val is not None:
+                            metadata[name] = val
+                            continue
+
+                # Fallback: field.parts approach for older gguf versions
                 if len(field.parts) > field.parts_count:
-                    # Has data parts beyond type descriptors
                     data_parts = field.parts[field.parts_count:]
                     if len(data_parts) == 1:
                         val = data_parts[0]
                         if hasattr(val, "__len__") and not isinstance(val, (int, float)):
-                            # It's an array-like (bytes or ndarray)
                             try:
                                 val = bytes(val).decode("utf-8")
                             except (UnicodeDecodeError, TypeError):
@@ -120,7 +188,6 @@ class ModelInspector:
                                     val = str(val)
                         metadata[name] = val
                     else:
-                        # Multiple data parts — likely a token list or array
                         metadata[name] = data_parts
                 elif len(field.parts) == 1:
                     val = field.parts[0]
@@ -131,25 +198,92 @@ class ModelInspector:
             except Exception:
                 continue
 
-        # Also gather tensor info for quantization detection
+        # Gather tensor info for quantization detection
         tensor_quant_types: dict[int, int] = {}
+        total_params = 0
         for tensor in reader.tensors:
             qt = int(tensor.tensor_type)
             tensor_quant_types[qt] = tensor_quant_types.get(qt, 0) + 1
-
-        metadata["_tensor_quant_types"] = tensor_quant_types
-        metadata["_tensor_count"] = len(reader.tensors)
-
-        # Calculate total parameter count from tensors
-        total_params = 0
-        for tensor in reader.tensors:
             size = 1
             for dim in tensor.shape:
                 size *= dim
             total_params += size
+
+        metadata["_tensor_quant_types"] = tensor_quant_types
+        metadata["_tensor_count"] = len(reader.tensors)
         metadata["_total_params"] = total_params
 
         return metadata
+
+    def _aggregate_split_tensors(
+        self, metadata: dict, shard_paths: list[str],
+    ) -> None:
+        """Read tensor info from all split shards and merge into metadata.
+
+        Shard 1's metadata dict is updated in-place with aggregated
+        tensor counts and parameter totals from all shards.
+        """
+        try:
+            from gguf import GGUFReader
+        except ImportError:
+            return
+
+        all_quant_types: dict[int, int] = metadata.get("_tensor_quant_types", {}).copy()
+        total_params = metadata.get("_total_params", 0)
+        total_tensors = metadata.get("_tensor_count", 0)
+
+        # Skip shard 1 (already read)
+        for shard_path in shard_paths[1:]:
+            try:
+                reader = GGUFReader(shard_path)
+                for tensor in reader.tensors:
+                    qt = int(tensor.tensor_type)
+                    all_quant_types[qt] = all_quant_types.get(qt, 0) + 1
+                    size = 1
+                    for dim in tensor.shape:
+                        size *= dim
+                    total_params += size
+                    total_tensors += 1
+            except Exception:
+                continue
+
+        metadata["_tensor_quant_types"] = all_quant_types
+        metadata["_total_params"] = total_params
+        metadata["_tensor_count"] = total_tensors
+
+    def _extract_field_value(self, data):
+        """Try to extract a Python scalar or string from a GGUF field data."""
+        import numpy as np
+
+        if isinstance(data, (int, float, str, bool)):
+            return data
+
+        if isinstance(data, bytes):
+            try:
+                return data.decode("utf-8")
+            except UnicodeDecodeError:
+                return None
+
+        if isinstance(data, np.ndarray):
+            if data.size == 1:
+                return data.item()
+            # String arrays (tokenizer tokens, etc.)
+            if data.dtype.kind in ("U", "S", "O"):
+                return data.tolist()
+            return data.tolist()
+
+        if hasattr(data, "__len__"):
+            if len(data) == 1:
+                try:
+                    return int(data[0])
+                except (ValueError, TypeError):
+                    pass
+            try:
+                return bytes(data).decode("utf-8")
+            except (UnicodeDecodeError, TypeError):
+                pass
+
+        return None
 
     def _populate_from_metadata(self, profile: ModelProfile, meta: dict) -> None:
         """Fill ModelProfile fields from GGUF metadata."""
@@ -232,6 +366,24 @@ class ModelInspector:
             profile.num_active_experts = self._get_int(
                 meta, f"{prefix}.expert_used_count", 1)
 
+    def _refine_split_quant(self, profile: ModelProfile, filename: str) -> None:
+        """For split models, refine the quant type from the filename.
+
+        When a model is split across shards, shard 1 may have a skewed
+        distribution of tensor types (e.g., embeddings in shard 1 may be
+        a different type). The filename often encodes the intended quant.
+        """
+        from adhie.inspector.model_resolver import _extract_quant
+
+        filename_quant = _extract_quant(filename)
+        if filename_quant and filename_quant != profile.weight_dtype:
+            # Check if the filename quant is a known type
+            for _type_id, (name, bits) in QUANT_TYPE_MAP.items():
+                if name == filename_quant:
+                    profile.weight_dtype = name
+                    profile.bits_per_weight = bits
+                    break
+
     def check_draft_compatibility(
         self, target: ModelProfile, draft: ModelProfile
     ) -> tuple[bool, list[str]]:
@@ -312,6 +464,11 @@ class ModelInspector:
         table.add_row("", "Family", profile.model_family)
         table.add_row("", "File Size", f"{profile.file_size_bytes / 1e9:.2f} GB")
 
+        # Check if this is a split model
+        split_shards = _detect_split_shards(profile.model_path)
+        if split_shards:
+            table.add_row("", "Split Model", f"Yes ({len(split_shards)} shards)")
+
         table.add_section()
 
         # Architecture
@@ -373,4 +530,3 @@ class ModelInspector:
         table.add_row("", "Fingerprint", profile.fingerprint())
 
         console.print(table)
-
