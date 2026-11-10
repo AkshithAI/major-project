@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ADHIE specific
+vendor/
+*.gguf
+benchmarks/results/*.json
+benchmarks/plots/*.png
+configs/hardware_profiles/*.yaml
+!configs/hardware_profiles/template.yaml
+configs/model_profiles/*.yaml
+!configs/model_profiles/template.yaml
+configs/run_plans/*.yaml
+
+# CUDA experiments
+cuda_experiments/**/build/
+cuda_experiments/**/*.o
+cuda_experiments/**/*.so
+
+# Profiling
+*.nsys-rep
+*.ncu-rep
+*.sqlite
+

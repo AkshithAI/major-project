@@ -1,0 +1,34 @@
+# Hardware Profile Template
+# Fill in with actual values from your machine
+
+gpu_name: null                    # e.g., "NVIDIA GeForce RTX 3060"
+gpu_compute_capability: null      # e.g., [8, 6]
+vram_total_bytes: 0               # e.g., 6442450944 (6 GB)
+vram_free_bytes: 0
+gpu_count: 0
+
+cpu_model: "unknown"              # e.g., "AMD Ryzen 7 5800X"
+cpu_physical_cores: 0
+cpu_logical_cores: 0
+cpu_freq_mhz: null
+simd_flags: []                    # e.g., ["avx2", "avx512f"]
+
+ram_total_bytes: 0                # e.g., 34359738368 (32 GB)
+ram_available_bytes: 0
+
+h2d_bandwidth_bytes_s: null       # Measured Host→Device (bytes/s)
+d2h_bandwidth_bytes_s: null       # Measured Device→Host (bytes/s)
+ram_bandwidth_bytes_s: null       # Measured CPU memory bandwidth
+gpu_mem_bandwidth_bytes_s: null   # Measured GPU memory bandwidth
+
+pcie_gen: null                    # e.g., 4
+pcie_width: null                  # e.g., 16
+
+storage_type: "unknown"           # "ssd" or "hdd"
+storage_read_mbps: null
+
+cuda_version: null                # e.g., "12.4"
+driver_version: null              # e.g., "550.54.14"
+
+vram_safety_margin_bytes: 536870912  # 512 MB
+

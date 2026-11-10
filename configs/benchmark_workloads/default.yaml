@@ -1,0 +1,64 @@
+# Benchmark Workload Configuration — Default
+# Used for baseline and ADHIE comparison runs
+
+prompts:
+  short:
+    name: "Short context (code completion)"
+    token_count: ~2000
+    text: |
+      You are an expert Python developer. Write a comprehensive implementation
+      of a binary search tree with the following methods: insert, delete, search,
+      in-order traversal, pre-order traversal, post-order traversal, find minimum,
+      find maximum, height calculation, and balance checking. Include proper error
+      handling and type hints. Add docstrings for every method.
+
+  medium:
+    name: "Medium context (analysis)"
+    token_count: ~4000
+    text: |
+      Analyze the following system architecture for a distributed key-value store
+      and provide a detailed critique covering consistency guarantees, fault tolerance,
+      scalability bottlenecks, and suggested improvements.
+
+      The system uses a leader-follower replication model with the following components:
+      1. Client Gateway: Receives all read/write requests, routes writes to the leader.
+      2. Leader Node: Processes all writes, maintains a write-ahead log (WAL), replicates
+         to followers using synchronous replication for strong consistency.
+      3. Follower Nodes (3 replicas): Receive replicated writes from the leader, serve
+         read requests with read-your-writes consistency using session tokens.
+      4. Metadata Service: Stores cluster membership, partition map, and leader election
+         state using a Raft consensus group.
+      5. Partition Manager: Handles range-based partitioning with dynamic split/merge
+         based on partition size thresholds (256MB-1GB per partition).
+
+      Key design decisions:
+      - Synchronous replication to 2 of 3 followers before acknowledging writes
+      - Read-your-writes consistency using logical timestamps in session tokens
+      - Leader election via the metadata service Raft group with 5-second timeout
+      - Data stored in LSM-tree based storage engine with bloom filters
+      - Cross-partition transactions use 2PC with the leader as coordinator
+      - Compaction runs in background threads with rate limiting to avoid I/O spikes
+
+      Provide your analysis in the following structure:
+      1. Consistency Analysis
+      2. Availability and Fault Tolerance
+      3. Scalability Assessment
+      4. Performance Bottlenecks
+      5. Security Considerations
+      6. Recommended Improvements (prioritized)
+
+output_lengths:
+  - 128
+  - 256
+
+generation:
+  temperature: 0.0
+  top_p: 1.0
+  seed: 42
+  repeat_penalty: 1.0
+
+benchmark:
+  warmup_requests: 2
+  timed_requests: 3
+  cooldown_seconds: 5
+

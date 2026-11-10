@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adhie"
+version = "0.1.0"
+description = "Adaptive Heterogeneous Inference Engine for Local LLMs"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    "click>=8.0",
+    "pyyaml>=6.0",
+    "psutil>=5.9",
+    "nvidia-ml-py>=11.5",
+    "requests>=2.28",
+    "sseclient-py>=1.8",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "rich>=13.0",
+    "huggingface_hub>=0.20",
+    "gguf>=0.6",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "pycuda>=2022.1",
+    "cupy-cuda12x>=12.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+
+[project.scripts]
+adhie = "adhie.cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+

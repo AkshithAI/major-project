@@ -1,0 +1,35 @@
+# Model Profile Template
+# Auto-filled by `adhie inspect`, or manually populate
+
+model_id: "unknown"
+model_path: ""
+file_size_bytes: 0
+
+architecture: "unknown"           # e.g., "qwen2", "llama"
+model_family: "unknown"           # e.g., "Qwen2.5"
+parameter_count: 0                # e.g., 14700000000
+layer_count: 0                    # e.g., 40
+hidden_size: 0                    # e.g., 5120
+intermediate_size: 0              # e.g., 13824
+vocab_size: 0                     # e.g., 152064
+
+num_attention_heads: 0            # e.g., 40
+num_kv_heads: 0                   # e.g., 8  (GQA)
+head_dim: 0                       # e.g., 128
+max_context: 0                    # e.g., 32768
+attention_type: "full"            # "full", "sliding_window", "hybrid"
+sliding_window_size: null
+
+weight_dtype: "unknown"           # e.g., "q4_k_m"
+bits_per_weight: 16.0             # e.g., 4.5 for Q4_K_M
+
+tokenizer_id: "unknown"
+chat_template: null
+
+is_moe: false
+num_experts: null
+num_active_experts: null
+
+draft_model_path: null
+draft_compatible: null
+
