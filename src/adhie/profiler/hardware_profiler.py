@@ -227,6 +227,36 @@ class HardwareProfiler:
         if system == "Darwin":
             # macOS — most modern Macs use SSD
             hp.storage_type = "ssd"
+        elif system == "Windows":
+            try:
+                # Use PowerShell to detect media type
+                result = subprocess.run(
+                    ["powershell", "-Command",
+                     "Get-PhysicalDisk | Select-Object MediaType | "
+                     "Format-Table -HideTableHeaders"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode == 0:
+                    output = result.stdout.strip().lower()
+                    if "ssd" in output or "solid" in output:
+                        hp.storage_type = "ssd"
+                    elif "hdd" in output or "unspecified" in output:
+                        hp.storage_type = "hdd"
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+            # Fallback: check if system drive is on NVMe
+            if hp.storage_type == "unknown":
+                try:
+                    result = subprocess.run(
+                        ["powershell", "-Command",
+                         "Get-PhysicalDisk | Select-Object BusType | "
+                         "Format-Table -HideTableHeaders"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if result.returncode == 0 and "nvme" in result.stdout.lower():
+                        hp.storage_type = "ssd"
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    pass
         elif system == "Linux":
             try:
                 # Check if root device is rotational

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -85,7 +86,7 @@ class TestHardwareProfilerReport:
             ram_available_bytes=24_000_000_000,
             ram_bandwidth_bytes_s=40e9,
         )
-        console = Console(file=open("/dev/null", "w"))
+        console = Console(file=io.StringIO())
         profiler = HardwareProfiler()
         profiler.print_report(hp, console)  # Should not raise
 
@@ -98,7 +99,7 @@ class TestHardwareProfilerReport:
             ram_total_bytes=16_000_000_000,
             ram_available_bytes=12_000_000_000,
         )
-        console = Console(file=open("/dev/null", "w"))
+        console = Console(file=io.StringIO())
         profiler = HardwareProfiler()
         profiler.print_report(hp, console)  # Should not raise
 

@@ -103,6 +103,7 @@ def plan(model_ref: str, context: int, draft: str | None, output: str | None) ->
     from adhie.profiler.hardware_profiler import HardwareProfiler
     from adhie.inspector.model_inspector import ModelInspector
     from adhie.planner.plan_generator import PlanGenerator
+    from adhie.estimator.memory_estimator import MemoryEstimator
     from adhie.types import WorkloadConfig
 
     console.print("[bold blue]ADHIE Plan Generator[/bold blue]")
@@ -112,13 +113,29 @@ def plan(model_ref: str, context: int, draft: str | None, output: str | None) ->
     model_path = _resolve_model(model_ref)
     draft_path = _resolve_model(draft) if draft else None
 
-    hw = HardwareProfiler().profile()
+    console.print("[dim]Profiling hardware...[/dim]")
+    hw = HardwareProfiler(verbose=False).profile()
+    console.print(f"  GPU: {hw.gpu_name or 'None'} | "
+                  f"VRAM: {hw.vram_free_bytes / 1e9:.1f} GB | "
+                  f"RAM: {hw.ram_available_bytes / 1e9:.1f} GB")
+    console.print()
+
+    console.print("[dim]Inspecting model...[/dim]")
     model = ModelInspector().inspect(model_path)
     if draft_path:
         model.draft_model_path = draft_path
+    console.print(f"  {model.model_id} | {model.parameter_count / 1e9:.1f}B | "
+                  f"{model.layer_count}L | {model.weight_dtype}")
+    console.print()
+
+    # Show memory estimate for max GPU layers
+    estimator = MemoryEstimator()
+    max_layers = estimator.find_max_gpu_layers(hw, model, context)
+    console.print(f"[dim]Max GPU layers: {max_layers}/{model.layer_count}[/dim]")
+    console.print()
 
     workload = WorkloadConfig(context_length=context)
-    generator = PlanGenerator()
+    generator = PlanGenerator(estimator=estimator)
     candidates = generator.generate_candidates(hw, model, workload)
 
     generator.print_candidates(candidates, console)
@@ -132,6 +149,42 @@ def plan(model_ref: str, context: int, draft: str | None, output: str | None) ->
         with open(output, "w") as f:
             yaml.dump(data, f, default_flow_style=False)
         console.print(f"\n[green]Plans saved to {output}[/green]")
+
+
+@cli.command()
+@click.argument("model_ref")
+@click.option("--context", "-c", default=8192, help="Context length in tokens")
+@click.option("--gpu-layers", "-g", default=None, type=int, help="GPU layers (auto if omitted)")
+@click.option("--kv-type", default="f16", help="KV cache type (f16, q8_0)")
+@click.option("--kv-offload", is_flag=True, help="Offload KV cache to RAM")
+def estimate(model_ref: str, context: int, gpu_layers: int | None,
+             kv_type: str, kv_offload: bool) -> None:
+    """Estimate memory requirements for a model configuration.
+
+    MODEL_REF can be a local path or HuggingFace repo ID.
+    """
+    from adhie.profiler.hardware_profiler import HardwareProfiler
+    from adhie.inspector.model_inspector import ModelInspector
+    from adhie.estimator.memory_estimator import MemoryEstimator
+
+    console.print("[bold blue]ADHIE Memory Estimator[/bold blue]")
+    console.print()
+
+    model_path = _resolve_model(model_ref)
+    hw = HardwareProfiler(verbose=False).profile()
+    model = ModelInspector().inspect(model_path)
+
+    estimator = MemoryEstimator()
+
+    if gpu_layers is None:
+        gpu_layers = estimator.find_max_gpu_layers(
+            hw, model, context, kv_dtype=kv_type, kv_offload=kv_offload,
+        )
+        console.print(f"[dim]Auto-detected max GPU layers: {gpu_layers}/{model.layer_count}[/dim]")
+        console.print()
+
+    est = estimator.estimate(hw, model, context, gpu_layers, kv_type, kv_offload)
+    estimator.print_report(est, model, gpu_layers, context, console)
 
 
 @cli.command()
@@ -202,7 +255,8 @@ def run(model_ref: str, context: int, draft: str | None,
 
     # Step 5: Launch
     console.print("[bold]Step 5:[/bold] Launching inference server...")
-    server_path = backend_path or _find_llama_server()
+    from adhie.runtime.llamacpp_adapter import LlamaCppAdapter, find_llama_server
+    server_path = backend_path or find_llama_server()
     adapter = LlamaCppAdapter(server_path)
 
     try:
@@ -253,38 +307,95 @@ def models() -> None:
 @click.option("--output", "-o", default="benchmarks/results", help="Results directory")
 @click.option("--mode", type=click.Choice(["baseline", "auto", "sweep"]), default="auto")
 @click.option("--backend-path", default=None)
+@click.option("--runs", "-r", default=3, help="Number of timed iterations")
+@click.option("--tokens", "-t", default=128, help="Output tokens to generate")
 def benchmark(model_ref: str, context: int, draft: str | None,
-              output: str, mode: str, backend_path: str | None) -> None:
+              output: str, mode: str, backend_path: str | None,
+              runs: int, tokens: int) -> None:
     """Run the benchmark suite and save results.
 
     MODEL_REF can be a local path or HuggingFace repo ID.
     """
-    console.print("[bold blue]ADHIE Benchmark Suite[/bold blue]")
-    console.print(f"Mode: {mode}")
-    console.print("(Benchmark runner will be fully implemented in Module 3)")
-
-
-def _find_llama_server() -> str:
-    """Locate llama-server binary."""
-    import shutil
     from pathlib import Path
+    from adhie.profiler.hardware_profiler import HardwareProfiler
+    from adhie.inspector.model_inspector import ModelInspector
+    from adhie.planner.plan_generator import PlanGenerator
+    from adhie.runtime.llamacpp_adapter import LlamaCppAdapter, find_llama_server
+    from adhie.benchmark.runner import BenchmarkRunner
+    from adhie.types import WorkloadConfig
 
-    # Check vendor directory first
-    vendor_path = (Path(__file__).parent.parent.parent.parent
-                   / "vendor" / "llama.cpp" / "build" / "bin" / "llama-server")
-    if vendor_path.exists():
-        return str(vendor_path)
+    console.print("[bold blue]ADHIE Benchmark Suite[/bold blue]")
+    console.print(f"Mode: {mode} | Runs: {runs} | Tokens: {tokens}")
+    console.print()
 
-    # Check PATH
-    path = shutil.which("llama-server")
-    if path:
-        return path
+    # Resolve model
+    model_path = _resolve_model(model_ref)
+    draft_path = _resolve_model(draft) if draft else None
 
-    raise FileNotFoundError(
-        "llama-server not found. Either:\n"
-        "  1. Run ./scripts/setup_backend.sh to build it, or\n"
-        "  2. Pass --backend-path /path/to/llama-server"
+    # Profile & inspect
+    hw = HardwareProfiler(verbose=False).profile()
+    model = ModelInspector().inspect(model_path)
+    if draft_path:
+        model.draft_model_path = draft_path
+
+    # Generate plans
+    workload = WorkloadConfig(context_length=context, output_tokens=tokens)
+    generator = PlanGenerator()
+    candidates = generator.generate_candidates(hw, model, workload)
+
+    if not candidates:
+        console.print("[bold red]No feasible plans found![/bold red]")
+        raise SystemExit(1)
+
+    # Select plans to benchmark based on mode
+    if mode == "baseline":
+        # CPU-only baseline: find the plan with gpu_layers=0
+        cpu_plans = [p for p in candidates if p.gpu_layers == 0]
+        plans_to_test = cpu_plans[:1] if cpu_plans else candidates[:1]
+    elif mode == "sweep":
+        # Test top 3 diverse plans
+        plans_to_test = candidates[:3]
+    else:
+        # auto: test the best plan
+        plans_to_test = candidates[:1]
+
+    # Run benchmarks
+    server_path = backend_path or find_llama_server()
+    adapter = LlamaCppAdapter(server_path)
+    runner = BenchmarkRunner(adapter, warmup_runs=1, timed_runs=runs)
+
+    prompt = (
+        "Write a comprehensive explanation of how heterogeneous CPU and GPU "
+        "computing works for large language model inference, covering memory "
+        "management, layer placement, and speculative decoding."
     )
+
+    results = []
+    try:
+        for plan in plans_to_test:
+            result = runner.run_single(
+                plan=plan,
+                prompt=prompt,
+                max_tokens=tokens,
+                hardware_profile=hw,
+                model_profile=model,
+            )
+            results.append(result)
+            adapter.unload()
+
+        # Print comparison
+        runner.print_comparison(results)
+
+        # Save results
+        out_dir = Path(output)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for r in results:
+            out_file = out_dir / f"{r.run_id}.json"
+            r.to_json(out_file)
+            console.print(f"[green]Saved: {out_file}[/green]")
+
+    finally:
+        adapter.unload()
 
 
 def _interactive_loop(adapter: "LlamaCppAdapter", console: Console) -> None:
