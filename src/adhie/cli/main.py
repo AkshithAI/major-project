@@ -3,9 +3,13 @@
 Usage:
     adhie profile                       Profile local hardware
     adhie inspect MODEL                 Inspect model metadata
+    adhie estimate MODEL                Estimate memory requirements
     adhie plan MODEL                    Generate execution plan candidates
     adhie run MODEL                     Profile, plan, and run inference
     adhie benchmark MODEL               Run benchmark suite
+    adhie experiment MODEL              Run speculative decoding experiments
+    adhie compare FILE [FILE ...]       Compare benchmark results
+    adhie ablation MODEL                Run ablation studies
     adhie models                        List cached models
 
 MODEL can be:
@@ -525,6 +529,174 @@ def experiment(model_ref: str, draft: str, context: int,
         with open(summary_file, "w") as f:
             json.dump(summary_data, f, indent=2)
         console.print(f"\n[green]Results saved to {summary_file}[/green]")
+
+    finally:
+        adapter.unload()
+
+
+@cli.command()
+@click.argument("result_files", nargs=-1, required=True, type=click.Path(exists=True))
+@click.option("--output", "-o", default=None, help="Save Markdown report to file")
+def compare(result_files: tuple[str, ...], output: str | None) -> None:
+    """Compare benchmark results from JSON files.
+
+    Pass two or more result JSON files to see a side-by-side comparison table.
+    """
+    from pathlib import Path
+    from adhie.benchmark.report import (
+        comparison_to_markdown,
+        print_comparison_table,
+        results_to_comparison,
+        generate_summary,
+    )
+
+    console.print("[bold blue]ADHIE Benchmark Comparison[/bold blue]")
+    console.print()
+
+    results = []
+    for f in result_files:
+        from adhie.types import BenchmarkResult
+        results.append(BenchmarkResult.from_json(Path(f)))
+
+    if not results:
+        console.print("[red]No valid result files found.[/red]")
+        raise SystemExit(1)
+
+    rows = results_to_comparison(results)
+    print_comparison_table(rows, console)
+
+    summary = generate_summary(results)
+    console.print()
+    console.print(f"[bold]Best configuration:[/bold] {summary.get('best_plan_id', '?')}")
+    console.print(f"  TPOT: {summary.get('best_tpot_ms', 0):.1f} ms")
+    console.print(f"  tok/s: {summary.get('best_tokens_per_s', 0):.1f}")
+
+    if output:
+        md = comparison_to_markdown(rows)
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        with open(output, "w") as f:
+            f.write("# ADHIE Benchmark Comparison\n\n")
+            f.write(md)
+            f.write("\n")
+        console.print(f"\n[green]Report saved to {output}[/green]")
+
+
+@cli.command()
+@click.argument("model_ref")
+@click.option("--context", "-c", default=8192, help="Context length")
+@click.option("--draft", "-d", default=None, help="Draft model (path or HF repo)")
+@click.option("--backend-path", default=None, help="Path to llama-server binary")
+@click.option("--runs", "-r", default=3, help="Timed runs per configuration")
+@click.option("--tokens", "-t", default=128, help="Output tokens per run")
+@click.option("--output", "-o", default="benchmarks/results/ablation", help="Results directory")
+def ablation(model_ref: str, context: int, draft: str | None,
+             backend_path: str | None, runs: int, tokens: int,
+             output: str) -> None:
+    """Run ablation studies to isolate each feature's contribution.
+
+    Systematically enables/disables features and benchmarks the delta.
+    MODEL_REF can be a local path or HuggingFace repo ID.
+    """
+    from pathlib import Path
+    from adhie.profiler.hardware_profiler import HardwareProfiler
+    from adhie.inspector.model_inspector import ModelInspector
+    from adhie.planner.plan_generator import PlanGenerator
+    from adhie.runtime.llamacpp_adapter import LlamaCppAdapter, find_llama_server
+    from adhie.benchmark.runner import BenchmarkRunner
+    from adhie.benchmark.ablation import (
+        build_ablation_configs,
+        plan_pairs_from_configs,
+        results_to_ablation_entries,
+    )
+    from adhie.benchmark.report import (
+        ablation_to_markdown,
+        print_ablation_table,
+    )
+    from adhie.types import WorkloadConfig
+
+    console.print("[bold blue]ADHIE Ablation Study[/bold blue]")
+    console.print()
+
+    # Resolve models
+    model_path = _resolve_model(model_ref)
+    draft_path = _resolve_model(draft) if draft else None
+
+    # Profile & inspect
+    hw = HardwareProfiler(verbose=False).profile()
+    model = ModelInspector().inspect(model_path)
+    if draft_path:
+        model.draft_model_path = draft_path
+
+    # Generate the ADHIE-selected plan as the base
+    workload = WorkloadConfig(context_length=context, output_tokens=tokens)
+    candidates = PlanGenerator().generate_candidates(hw, model, workload)
+    if not candidates:
+        console.print("[bold red]No feasible plans found![/bold red]")
+        raise SystemExit(1)
+    base_plan = candidates[0]
+
+    # Build ablation configs
+    configs = build_ablation_configs(base_plan, hw, model)
+    pairs = plan_pairs_from_configs(configs, base_plan)
+
+    console.print(f"[bold]Ablation studies to run:[/bold] {len(configs)}")
+    for cfg in configs:
+        console.print(f"  • {cfg.name}: {cfg.description}")
+    console.print()
+
+    # Run each pair
+    server_path = backend_path or find_llama_server()
+    adapter = LlamaCppAdapter(server_path)
+    runner = BenchmarkRunner(adapter, warmup_runs=1, timed_runs=runs)
+    prompt = "Explain the concept of attention mechanisms in transformer models."
+
+    baseline_results = []
+    variant_results = []
+
+    try:
+        for name, baseline_plan, variant_plan in pairs:
+            console.print(f"\n[bold cyan]━━━ {name} ━━━[/bold cyan]")
+
+            # Run baseline
+            console.print(f"  [dim]Baseline: {baseline_plan.plan_id}[/dim]")
+            b_result = runner.run_single(
+                baseline_plan, prompt, tokens,
+                hardware_profile=hw, model_profile=model,
+            )
+            baseline_results.append(b_result)
+            adapter.unload()
+
+            # Run variant
+            console.print(f"  [dim]Variant: {variant_plan.plan_id}[/dim]")
+            v_result = runner.run_single(
+                variant_plan, prompt, tokens,
+                hardware_profile=hw, model_profile=model,
+            )
+            variant_results.append(v_result)
+            adapter.unload()
+
+        # Compute ablation entries
+        entries = results_to_ablation_entries(configs, baseline_results, variant_results)
+
+        # Print results
+        console.print()
+        print_ablation_table(entries, console)
+
+        # Save
+        out_dir = Path(output)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        md = ablation_to_markdown(entries)
+        md_file = out_dir / "ablation_report.md"
+        with open(md_file, "w") as f:
+            f.write("# ADHIE Ablation Study\n\n")
+            f.write(md)
+            f.write("\n")
+        console.print(f"\n[green]Report saved to {md_file}[/green]")
+
+        # Save individual results
+        for r in baseline_results + variant_results:
+            r.to_json(out_dir / f"{r.run_id}.json")
 
     finally:
         adapter.unload()
