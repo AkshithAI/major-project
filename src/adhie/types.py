@@ -202,6 +202,10 @@ class WorkloadConfig:
     context_length: int = 8192
     output_tokens: int = 256
     active_sequences: int = 1
+    batch_size: int = 1
+
+    # Workload type hint for benchmark prompt selection
+    workload_type: str = "chat"  # "chat", "code", "summarize"
 
     # Benchmark prompt references
     prompt_file: str | None = None

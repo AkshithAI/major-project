@@ -148,7 +148,25 @@ class ModelInspector:
         return profile
 
     def _read_gguf_metadata(self, model_path: str) -> dict:
-        """Read all key-value metadata from a GGUF file."""
+        """Read all key-value metadata from a GGUF file.
+
+        In the ``gguf`` library (>= 0.9), each ``ReaderField`` is a
+        ``NamedTuple(offset, name, parts, data, types)`` where:
+
+        * ``parts``  – list of numpy arrays holding type tags **and** raw data.
+        * ``data``   – list of **integer indices** into ``parts`` that point
+          to the arrays containing the *actual* values.
+        * ``types``  – list of ``GGUFValueType`` enums describing the value(s).
+
+        So ``field.data`` is **not** the value itself; it is a list of int
+        indices.  To read a scalar or string value we must dereference
+        ``field.parts[field.data[i]]``.
+
+        GGUFValueType enum (for reference):
+            UINT8=0  INT8=1  UINT16=2  INT16=3  UINT32=4  INT32=5
+            FLOAT32=6  BOOL=7  STRING=8  ARRAY=9  UINT64=10  INT64=11
+            FLOAT64=12
+        """
         try:
             from gguf import GGUFReader
         except ImportError:
@@ -159,42 +177,67 @@ class ModelInspector:
         reader = GGUFReader(model_path)
         metadata: dict = {}
 
-        # Modern gguf library: fields is a dict of name → GGUFField
+        # String type value (GGUFValueType.STRING = 8)
+        _STRING_TYPE = 8
+
         for field in reader.fields.values():
             name = field.name
             try:
-                # Modern approach: try .data property first (gguf >= 0.9)
-                if hasattr(field, "data"):
-                    data = field.data
-                    if data is not None:
-                        # ndarray/bytes → try to get a scalar or string
-                        val = self._extract_field_value(data)
-                        if val is not None:
-                            metadata[name] = val
-                            continue
+                if not hasattr(field, "data") or not hasattr(field, "types"):
+                    continue
+                if not field.data or not field.types:
+                    continue
 
-                # Fallback: field.parts approach for older gguf versions
-                if len(field.parts) > field.parts_count:
-                    data_parts = field.parts[field.parts_count:]
-                    if len(data_parts) == 1:
-                        val = data_parts[0]
-                        if hasattr(val, "__len__") and not isinstance(val, (int, float)):
-                            try:
-                                val = bytes(val).decode("utf-8")
-                            except (UnicodeDecodeError, TypeError):
-                                try:
-                                    val = int(val[0]) if len(val) == 1 else val.tolist()
-                                except Exception:
-                                    val = str(val)
-                        metadata[name] = val
+                # field.types[0] gives the top-level value type
+                vtype = int(field.types[0])
+
+                if vtype == _STRING_TYPE:
+                    # String: field.parts[field.data[0]] is a uint8 array →
+                    # convert to bytes → decode UTF-8
+                    raw = field.parts[field.data[0]]
+                    metadata[name] = bytes(raw).decode("utf-8", errors="replace")
+
+                elif vtype == 9:
+                    # ARRAY type – element type is field.types[1]
+                    if len(field.types) >= 2 and int(field.types[1]) == _STRING_TYPE:
+                        # Array of strings – decode each element
+                        strings = []
+                        for idx in field.data:
+                            strings.append(
+                                bytes(field.parts[idx]).decode("utf-8", errors="replace")
+                            )
+                        metadata[name] = strings
                     else:
-                        metadata[name] = data_parts
-                elif len(field.parts) == 1:
-                    val = field.parts[0]
-                    if hasattr(val, "item"):
-                        metadata[name] = val.item()
+                        # Array of scalars – collect all values
+                        vals = []
+                        for idx in field.data:
+                            part = field.parts[idx]
+                            if hasattr(part, "item"):
+                                vals.append(part.item())
+                            elif hasattr(part, "__len__") and len(part) == 1:
+                                vals.append(int(part[0]))
+                            else:
+                                vals.append(part)
+                        metadata[name] = vals
+
+                elif vtype == 7:
+                    # BOOL
+                    part = field.parts[field.data[0]]
+                    if hasattr(part, "__len__"):
+                        metadata[name] = bool(part[0])
                     else:
-                        metadata[name] = val
+                        metadata[name] = bool(part)
+
+                else:
+                    # Numeric scalar (UINT8..FLOAT64)
+                    part = field.parts[field.data[0]]
+                    if hasattr(part, "item"):
+                        metadata[name] = part.item()
+                    elif hasattr(part, "__len__") and len(part) == 1:
+                        metadata[name] = int(part[0])
+                    else:
+                        metadata[name] = part
+
             except Exception:
                 continue
 
@@ -250,40 +293,6 @@ class ModelInspector:
         metadata["_tensor_quant_types"] = all_quant_types
         metadata["_total_params"] = total_params
         metadata["_tensor_count"] = total_tensors
-
-    def _extract_field_value(self, data):
-        """Try to extract a Python scalar or string from a GGUF field data."""
-        import numpy as np
-
-        if isinstance(data, (int, float, str, bool)):
-            return data
-
-        if isinstance(data, bytes):
-            try:
-                return data.decode("utf-8")
-            except UnicodeDecodeError:
-                return None
-
-        if isinstance(data, np.ndarray):
-            if data.size == 1:
-                return data.item()
-            # String arrays (tokenizer tokens, etc.)
-            if data.dtype.kind in ("U", "S", "O"):
-                return data.tolist()
-            return data.tolist()
-
-        if hasattr(data, "__len__"):
-            if len(data) == 1:
-                try:
-                    return int(data[0])
-                except (ValueError, TypeError):
-                    pass
-            try:
-                return bytes(data).decode("utf-8")
-            except (UnicodeDecodeError, TypeError):
-                pass
-
-        return None
 
     def _populate_from_metadata(self, profile: ModelProfile, meta: dict) -> None:
         """Fill ModelProfile fields from GGUF metadata."""

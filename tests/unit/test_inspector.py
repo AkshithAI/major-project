@@ -2,12 +2,18 @@
 
 Since we may not have a real GGUF file in CI, these tests use mocking
 for the GGUF reader and test the metadata-to-profile logic.
+
+Includes tests for the critical _read_gguf_metadata method that must
+correctly dereference field.parts[field.data[i]] to extract values
+from the gguf library's ReaderField structure.
 """
 
 from __future__ import annotations
 
+from collections import namedtuple
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from adhie.inspector.model_inspector import (
@@ -16,6 +22,327 @@ from adhie.inspector.model_inspector import (
     _detect_split_shards,
 )
 from adhie.types import ModelProfile
+
+
+# ------------------------------------------------------------------
+# Mock GGUFReaderField matching the real gguf >= 0.9 structure:
+#   ReaderField(offset, name, parts, data, types)
+#
+#   parts: list of numpy arrays (type tags + data payloads)
+#   data:  list of int *indices* into parts pointing to actual values
+#   types: list of GGUFValueType enum ints
+# ------------------------------------------------------------------
+ReaderField = namedtuple("ReaderField", ["offset", "name", "parts", "data", "types"])
+
+
+def _make_string_field(name: str, value: str, offset: int = 0) -> ReaderField:
+    """Create a mock ReaderField for a STRING value."""
+    # parts[0..3] are type tags; parts[4] is the actual string data
+    # data = [4] → parts[4] is the payload
+    encoded = np.frombuffer(value.encode("utf-8"), dtype=np.uint8)
+    return ReaderField(
+        offset=offset,
+        name=name,
+        parts=[
+            np.array([8], dtype=np.uint32),   # type tag: STRING=8
+            np.array([len(value)], dtype=np.uint64),  # string length
+            np.array([], dtype=np.uint8),      # padding
+            np.array([], dtype=np.uint8),      # padding
+            encoded,                            # the actual string bytes
+        ],
+        data=[4],       # index into parts → parts[4] = encoded string
+        types=[8],      # GGUFValueType.STRING = 8
+    )
+
+
+def _make_uint32_field(name: str, value: int, offset: int = 0) -> ReaderField:
+    """Create a mock ReaderField for a UINT32 value."""
+    return ReaderField(
+        offset=offset,
+        name=name,
+        parts=[
+            np.array([4], dtype=np.uint32),    # type tag: UINT32=4
+            np.array([], dtype=np.uint8),
+            np.array([], dtype=np.uint8),
+            np.array([], dtype=np.uint8),
+            np.array([value], dtype=np.uint32),  # the actual value
+        ],
+        data=[4],       # index into parts → parts[4]
+        types=[4],      # GGUFValueType.UINT32 = 4
+    )
+
+
+def _make_float32_field(name: str, value: float, offset: int = 0) -> ReaderField:
+    """Create a mock ReaderField for a FLOAT32 value."""
+    return ReaderField(
+        offset=offset,
+        name=name,
+        parts=[
+            np.array([6], dtype=np.uint32),
+            np.array([], dtype=np.uint8),
+            np.array([], dtype=np.uint8),
+            np.array([], dtype=np.uint8),
+            np.array([value], dtype=np.float32),
+        ],
+        data=[4],
+        types=[6],      # GGUFValueType.FLOAT32 = 6
+    )
+
+
+def _make_bool_field(name: str, value: bool, offset: int = 0) -> ReaderField:
+    """Create a mock ReaderField for a BOOL value."""
+    return ReaderField(
+        offset=offset,
+        name=name,
+        parts=[
+            np.array([7], dtype=np.uint32),
+            np.array([], dtype=np.uint8),
+            np.array([], dtype=np.uint8),
+            np.array([], dtype=np.uint8),
+            np.array([int(value)], dtype=np.uint8),
+        ],
+        data=[4],
+        types=[7],      # GGUFValueType.BOOL = 7
+    )
+
+
+def _make_string_array_field(name: str, values: list[str], offset: int = 0) -> ReaderField:
+    """Create a mock ReaderField for an ARRAY of STRING values."""
+    parts = [
+        np.array([9], dtype=np.uint32),   # type tag: ARRAY=9
+        np.array([8], dtype=np.uint32),   # element type: STRING=8
+        np.array([len(values)], dtype=np.uint64),  # array length
+    ]
+    data_indices = []
+    for s in values:
+        idx = len(parts)
+        parts.append(np.array([len(s)], dtype=np.uint64))  # string length
+        idx_data = len(parts)
+        parts.append(np.frombuffer(s.encode("utf-8"), dtype=np.uint8))
+        data_indices.append(idx_data)
+    return ReaderField(
+        offset=offset,
+        name=name,
+        parts=parts,
+        data=data_indices,
+        types=[9, 8],   # ARRAY of STRING
+    )
+
+
+def _make_mock_tensor(tensor_type: int, shape: list[int]):
+    """Create a mock tensor object."""
+    t = MagicMock()
+    t.tensor_type = tensor_type
+    t.shape = np.array(shape, dtype=np.uint64)
+    return t
+
+
+def _make_qwen2_reader_mock():
+    """Build a mock GGUFReader with Qwen2.5-14B-like fields.
+
+    Uses the real ReaderField structure where field.data contains
+    indices into field.parts.
+    """
+    fields = {
+        "general.name": _make_string_field("general.name", "Qwen2.5-14B-Instruct"),
+        "general.architecture": _make_string_field("general.architecture", "qwen2"),
+        "qwen2.block_count": _make_uint32_field("qwen2.block_count", 40),
+        "qwen2.embedding_length": _make_uint32_field("qwen2.embedding_length", 5120),
+        "qwen2.feed_forward_length": _make_uint32_field("qwen2.feed_forward_length", 13824),
+        "qwen2.vocab_size": _make_uint32_field("qwen2.vocab_size", 152064),
+        "qwen2.attention.head_count": _make_uint32_field("qwen2.attention.head_count", 40),
+        "qwen2.attention.head_count_kv": _make_uint32_field("qwen2.attention.head_count_kv", 8),
+        "qwen2.attention.key_length": _make_uint32_field("qwen2.attention.key_length", 128),
+        "qwen2.context_length": _make_uint32_field("qwen2.context_length", 32768),
+        "tokenizer.ggml.model": _make_string_field("tokenizer.ggml.model", "gpt2"),
+        "tokenizer.chat_template": _make_string_field(
+            "tokenizer.chat_template", "{% for msg in messages %}..."
+        ),
+    }
+
+    # Create mock tensors — mostly q4_k_m (type=15), a few f16 (type=1)
+    tensors = []
+    for _ in range(300):
+        tensors.append(_make_mock_tensor(15, [4096, 4096]))  # q4_k_m
+    for _ in range(10):
+        tensors.append(_make_mock_tensor(1, [4096, 4096]))   # f16
+
+    reader = MagicMock()
+    reader.fields = fields
+    reader.tensors = tensors
+    return reader
+
+
+class TestReadGGUFMetadata:
+    """Test _read_gguf_metadata correctly dereferences field.parts[field.data[i]].
+
+    This is the critical test class for the bug where field.data (a list
+    of indices) was being treated as the actual values, causing all
+    metadata (name, architecture, layer count, etc.) to be wrong.
+    """
+
+    def setup_method(self) -> None:
+        self.inspector = ModelInspector()
+
+    @patch("adhie.inspector.model_inspector.GGUFReader", create=True)
+    def test_string_fields_extracted_correctly(self, mock_reader_cls) -> None:
+        """String values must be decoded from field.parts[field.data[0]]."""
+        reader = _make_qwen2_reader_mock()
+        mock_reader_cls.return_value = reader
+
+        # We need to patch the import inside the method
+        with patch.dict("sys.modules", {"gguf": MagicMock(GGUFReader=mock_reader_cls)}):
+            metadata = self.inspector._read_gguf_metadata("/fake/path.gguf")
+
+        assert metadata["general.name"] == "Qwen2.5-14B-Instruct"
+        assert metadata["general.architecture"] == "qwen2"
+        assert metadata["tokenizer.ggml.model"] == "gpt2"
+        assert "{% for msg in messages %}" in metadata["tokenizer.chat_template"]
+
+    @patch("adhie.inspector.model_inspector.GGUFReader", create=True)
+    def test_uint32_fields_extracted_correctly(self, mock_reader_cls) -> None:
+        """Numeric values must be read as Python ints, not index values."""
+        reader = _make_qwen2_reader_mock()
+        mock_reader_cls.return_value = reader
+
+        with patch.dict("sys.modules", {"gguf": MagicMock(GGUFReader=mock_reader_cls)}):
+            metadata = self.inspector._read_gguf_metadata("/fake/path.gguf")
+
+        # These MUST NOT be the index value (e.g. 4), they must be actual values
+        assert metadata["qwen2.block_count"] == 40
+        assert metadata["qwen2.embedding_length"] == 5120
+        assert metadata["qwen2.feed_forward_length"] == 13824
+        assert metadata["qwen2.vocab_size"] == 152064
+        assert metadata["qwen2.attention.head_count"] == 40
+        assert metadata["qwen2.attention.head_count_kv"] == 8
+        assert metadata["qwen2.attention.key_length"] == 128
+        assert metadata["qwen2.context_length"] == 32768
+
+    @patch("adhie.inspector.model_inspector.GGUFReader", create=True)
+    def test_tensor_aggregation(self, mock_reader_cls) -> None:
+        """Tensor counts and params should be aggregated from reader.tensors."""
+        reader = _make_qwen2_reader_mock()
+        mock_reader_cls.return_value = reader
+
+        with patch.dict("sys.modules", {"gguf": MagicMock(GGUFReader=mock_reader_cls)}):
+            metadata = self.inspector._read_gguf_metadata("/fake/path.gguf")
+
+        assert metadata["_tensor_count"] == 310
+        assert metadata["_tensor_quant_types"][15] == 300  # q4_k_m
+        assert metadata["_tensor_quant_types"][1] == 10    # f16
+        # 310 tensors × 4096 × 4096 each
+        assert metadata["_total_params"] == 310 * 4096 * 4096
+
+    @patch("adhie.inspector.model_inspector.GGUFReader", create=True)
+    def test_end_to_end_inspect_with_mock(self, mock_reader_cls) -> None:
+        """Full pipeline: _read_gguf_metadata → _populate_from_metadata → profile.
+
+        This validates that the metadata extraction produces values that
+        _populate_from_metadata can use correctly.
+        """
+        reader = _make_qwen2_reader_mock()
+        mock_reader_cls.return_value = reader
+
+        with patch.dict("sys.modules", {"gguf": MagicMock(GGUFReader=mock_reader_cls)}):
+            metadata = self.inspector._read_gguf_metadata("/fake/path.gguf")
+
+        profile = ModelProfile(model_path="/fake/path.gguf", file_size_bytes=9_000_000_000)
+        self.inspector._populate_from_metadata(profile, metadata)
+
+        assert profile.model_id == "Qwen2.5-14B-Instruct"
+        assert profile.architecture == "qwen2"
+        assert profile.layer_count == 40
+        assert profile.hidden_size == 5120
+        assert profile.intermediate_size == 13824
+        assert profile.vocab_size == 152064
+        assert profile.num_attention_heads == 40
+        assert profile.num_kv_heads == 8
+        assert profile.head_dim == 128
+        assert profile.max_context == 32768
+        assert profile.tokenizer_id == "gpt2"
+        assert profile.weight_dtype == "q4_k_m"
+
+        # Crucially, these must be non-zero so downstream estimator works
+        assert profile.weight_bytes_per_layer() > 0
+        assert profile.kv_bytes_per_token(16) > 0
+
+    @patch("adhie.inspector.model_inspector.GGUFReader", create=True)
+    def test_bool_field(self, mock_reader_cls) -> None:
+        """Boolean fields are correctly extracted."""
+        reader = MagicMock()
+        reader.fields = {
+            "general.name": _make_string_field("general.name", "test"),
+            "general.architecture": _make_string_field("general.architecture", "llama"),
+            "some.bool.field": _make_bool_field("some.bool.field", True),
+        }
+        reader.tensors = []
+        mock_reader_cls.return_value = reader
+
+        with patch.dict("sys.modules", {"gguf": MagicMock(GGUFReader=mock_reader_cls)}):
+            metadata = self.inspector._read_gguf_metadata("/fake/path.gguf")
+
+        assert metadata["some.bool.field"] is True
+
+    @patch("adhie.inspector.model_inspector.GGUFReader", create=True)
+    def test_float32_field(self, mock_reader_cls) -> None:
+        """Float fields are correctly extracted."""
+        reader = MagicMock()
+        reader.fields = {
+            "general.name": _make_string_field("general.name", "test"),
+            "some.float": _make_float32_field("some.float", 3.14),
+        }
+        reader.tensors = []
+        mock_reader_cls.return_value = reader
+
+        with patch.dict("sys.modules", {"gguf": MagicMock(GGUFReader=mock_reader_cls)}):
+            metadata = self.inspector._read_gguf_metadata("/fake/path.gguf")
+
+        assert abs(metadata["some.float"] - 3.14) < 0.01
+
+    @patch("adhie.inspector.model_inspector.GGUFReader", create=True)
+    def test_string_array_field(self, mock_reader_cls) -> None:
+        """Array of strings (e.g., tokenizer.ggml.tokens) are correctly extracted."""
+        reader = MagicMock()
+        reader.fields = {
+            "general.name": _make_string_field("general.name", "test"),
+            "tokenizer.ggml.tokens": _make_string_array_field(
+                "tokenizer.ggml.tokens", ["hello", "world", "test"]
+            ),
+        }
+        reader.tensors = []
+        mock_reader_cls.return_value = reader
+
+        with patch.dict("sys.modules", {"gguf": MagicMock(GGUFReader=mock_reader_cls)}):
+            metadata = self.inspector._read_gguf_metadata("/fake/path.gguf")
+
+        assert metadata["tokenizer.ggml.tokens"] == ["hello", "world", "test"]
+
+    @patch("adhie.inspector.model_inspector.GGUFReader", create=True)
+    def test_field_data_indices_not_used_as_values(self, mock_reader_cls) -> None:
+        """Regression: field.data=[4] must NOT produce value=4.
+
+        This was the original bug: field.data is a list of indices, not values.
+        When data=[4], the old code returned 4 as the value instead of
+        dereferencing parts[4] to get the actual value.
+        """
+        reader = MagicMock()
+        # field.data=[4] but actual value at parts[4] is 40
+        reader.fields = {
+            "general.name": _make_string_field("general.name", "TestModel"),
+            "general.architecture": _make_string_field("general.architecture", "qwen2"),
+            "qwen2.block_count": _make_uint32_field("qwen2.block_count", 40),
+        }
+        reader.tensors = []
+        mock_reader_cls.return_value = reader
+
+        with patch.dict("sys.modules", {"gguf": MagicMock(GGUFReader=mock_reader_cls)}):
+            metadata = self.inspector._read_gguf_metadata("/fake/path.gguf")
+
+        # The value MUST be 40 (from parts[4]), NOT 4 (the index in data)
+        assert metadata["qwen2.block_count"] == 40
+        assert metadata["qwen2.block_count"] != 4  # explicit regression check
+        assert metadata["general.name"] == "TestModel"
+        assert metadata["general.name"] != "4"  # explicit regression check
 
 
 class TestModelInspectorMetadataPopulation:

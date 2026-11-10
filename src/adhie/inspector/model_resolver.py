@@ -257,7 +257,6 @@ def _download_from_hf(
                 repo_id=repo_id,
                 filename=fname,
                 local_dir=str(local_dir),
-                local_dir_use_symlinks=False,
             )
         except Exception as e:
             raise FileNotFoundError(

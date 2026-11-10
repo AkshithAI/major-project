@@ -398,6 +398,138 @@ def benchmark(model_ref: str, context: int, draft: str | None,
         adapter.unload()
 
 
+@cli.command()
+@click.argument("model_ref")
+@click.option("--draft", "-d", required=True, help="Draft model (path or HF repo)")
+@click.option("--context", "-c", default=8192, help="Context length")
+@click.option("--backend-path", default=None, help="Path to llama-server binary")
+@click.option("--runs", "-r", default=3, help="Timed runs per configuration")
+@click.option("--tokens", "-t", default=128, help="Output tokens per run")
+@click.option("--output", "-o", default="benchmarks/results/spec", help="Results directory")
+def experiment(model_ref: str, draft: str, context: int,
+               backend_path: str | None, runs: int, tokens: int,
+               output: str) -> None:
+    """Run speculative decoding experiments (variants A-D × k sweep).
+
+    Requires both a target model and a draft model.
+    """
+    from pathlib import Path
+    from adhie.profiler.hardware_profiler import HardwareProfiler
+    from adhie.inspector.model_inspector import ModelInspector
+    from adhie.estimator.memory_estimator import MemoryEstimator
+    from adhie.planner.plan_generator import PlanGenerator
+    from adhie.runtime.llamacpp_adapter import LlamaCppAdapter, find_llama_server
+    from adhie.benchmark.runner import BenchmarkRunner
+    from adhie.speculative.controller import SpeculativeController
+    from adhie.speculative.draft_sweep import DraftLengthSweep
+    from adhie.types import WorkloadConfig
+
+    console.print("[bold blue]ADHIE Speculative Decoding Experiment[/bold blue]")
+    console.print()
+
+    # Resolve models
+    model_path = _resolve_model(model_ref)
+    draft_path = _resolve_model(draft)
+
+    # Profile & inspect
+    console.print("[dim]Profiling hardware...[/dim]")
+    hw = HardwareProfiler(verbose=False).profile()
+    console.print(f"  GPU: {hw.gpu_name or 'None'} | VRAM: {hw.vram_free_bytes / 1e9:.1f} GB")
+
+    console.print("[dim]Inspecting target model...[/dim]")
+    target = ModelInspector().inspect(model_path)
+    console.print(f"  Target: {target.model_id} ({target.parameter_count / 1e9:.1f}B)")
+
+    console.print("[dim]Inspecting draft model...[/dim]")
+    draft_profile = ModelInspector().inspect(draft_path)
+    console.print(f"  Draft: {draft_profile.model_id} ({draft_profile.parameter_count / 1e9:.1f}B)")
+    console.print()
+
+    # Check compatibility
+    inspector = ModelInspector()
+    compat, issues = inspector.check_draft_compatibility(target, draft_profile)
+    if issues:
+        for issue in issues:
+            console.print(f"  [yellow]⚠ {issue}[/yellow]")
+    if not compat:
+        console.print("[bold red]Draft model is incompatible with target![/bold red]")
+        raise SystemExit(1)
+    console.print("[green]Draft model is compatible.[/green]")
+    console.print()
+
+    # Find optimal GPU layers for target
+    estimator = MemoryEstimator()
+    target_gpu_layers = estimator.find_max_gpu_layers(hw, target, context)
+    console.print(f"[dim]Target GPU layers: {target_gpu_layers}/{target.layer_count}[/dim]")
+
+    # Build experiment matrix
+    controller = SpeculativeController(hw, target, draft_profile)
+    matrix = controller.build_experiment_matrix(target_gpu_layers)
+
+    # Show feasibility summary
+    console.print()
+    console.print("[bold]Variant Feasibility:[/bold]")
+    for item in controller.feasible_variants_summary():
+        status = "[green]✓[/green]" if item["feasible"] == "yes" else "[red]✗[/red]"
+        console.print(f"  {status} {item['variant']}: {item['reason']}")
+    console.print(f"\n[bold]Total configurations to test:[/bold] {len(matrix)}")
+    console.print()
+
+    # Build base plan
+    workload = WorkloadConfig(context_length=context, output_tokens=tokens)
+    candidates = PlanGenerator(estimator=estimator).generate_candidates(hw, target, workload)
+    if not candidates:
+        console.print("[bold red]No feasible base plan![/bold red]")
+        raise SystemExit(1)
+    base_plan = candidates[0]
+
+    # Run experiments
+    server_path = backend_path or find_llama_server()
+    adapter = LlamaCppAdapter(server_path)
+    runner = BenchmarkRunner(adapter, warmup_runs=1, timed_runs=runs, cooldown_seconds=1.0)
+
+    sweep = DraftLengthSweep(
+        adapter=adapter,
+        controller=controller,
+        runner=runner,
+        max_tokens=tokens,
+    )
+
+    try:
+        results = sweep.run_full_matrix(
+            matrix, base_plan,
+            hardware_profile=hw,
+            model_profile=target,
+        )
+        sweep.print_sweep_summary(results)
+
+        # Save results
+        out_dir = Path(output)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        import json
+        from dataclasses import asdict
+        summary_data = []
+        for variant in results:
+            for sr in variant.sweep_results:
+                summary_data.append({
+                    "variant_id": sr.variant_id,
+                    "draft_length": sr.draft_length,
+                    "ttft_ms": sr.metrics.ttft_ms,
+                    "tpot_ms": sr.metrics.tpot_ms,
+                    "tokens_per_s": sr.metrics.output_tokens_per_s,
+                    "error": sr.error,
+                })
+
+        summary_file = out_dir / "spec_sweep_summary.json"
+        with open(summary_file, "w") as f:
+            json.dump(summary_data, f, indent=2)
+        console.print(f"\n[green]Results saved to {summary_file}[/green]")
+
+    finally:
+        adapter.unload()
+
+
 def _interactive_loop(adapter: "LlamaCppAdapter", console: Console) -> None:
     """Simple interactive chat loop."""
     while True:
