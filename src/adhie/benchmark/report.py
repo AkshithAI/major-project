@@ -37,6 +37,7 @@ class ComparisonRow:
     peak_ram_gb: float
     spec_type: str = "none"
     draft_length: int = 0
+    prompt_tokens_per_s: float = 0.0
 
 
 @dataclass
@@ -113,6 +114,7 @@ def results_to_comparison(
             tpot_ms=r.metrics.tpot_ms,
             itl_p95_ms=r.metrics.itl_p95_ms,
             tokens_per_s=r.metrics.output_tokens_per_s,
+            prompt_tokens_per_s=r.metrics.prompt_tokens_per_s,
             peak_vram_gb=r.metrics.peak_vram_bytes / 1e9,
             peak_ram_gb=r.metrics.peak_ram_bytes / 1e9,
             spec_type=r.plan.spec_type,
@@ -159,6 +161,7 @@ def print_comparison_table(
     table.add_column("TPOT (ms)", justify="right")
     table.add_column("ITL P95", justify="right")
     table.add_column("tok/s", justify="right")
+    table.add_column("PP tok/s", justify="right")
     table.add_column("VRAM (GB)", justify="right")
     table.add_column("RAM (GB)", justify="right")
 
@@ -171,6 +174,7 @@ def print_comparison_table(
             str(r.gpu_layers), r.kv_type, spec,
             f"{r.ttft_ms:.0f}", f"{r.tpot_ms:.1f}", f"{r.itl_p95_ms:.1f}",
             f"[bold green]{r.tokens_per_s:.1f}[/bold green]",
+            f"{r.prompt_tokens_per_s:.1f}" if r.prompt_tokens_per_s > 0 else "—",
             f"{r.peak_vram_gb:.2f}" if r.peak_vram_gb > 0 else "—",
             f"{r.peak_ram_gb:.2f}" if r.peak_ram_gb > 0 else "—",
         )
@@ -214,8 +218,8 @@ def print_ablation_table(
 def comparison_to_markdown(rows: list[ComparisonRow]) -> str:
     """Generate a Markdown comparison table."""
     lines = [
-        "| Label | Mode | GPU Layers | KV | Spec | TTFT (ms) | TPOT (ms) | tok/s | VRAM (GB) |",
-        "|-------|------|-----------|-----|------|-----------|-----------|-------|-----------|",
+        "| Label | Mode | GPU Layers | KV | Spec | TTFT (ms) | TPOT (ms) | tok/s | PP tok/s | VRAM (GB) |",
+        "|-------|------|-----------|-----|------|-----------|-----------|-------|----------|-----------|",
     ]
     for r in rows:
         spec = r.spec_type
@@ -224,7 +228,7 @@ def comparison_to_markdown(rows: list[ComparisonRow]) -> str:
         lines.append(
             f"| {r.label} | {r.execution_mode} | {r.gpu_layers} | {r.kv_type} | "
             f"{spec} | {r.ttft_ms:.0f} | {r.tpot_ms:.1f} | "
-            f"{r.tokens_per_s:.1f} | {r.peak_vram_gb:.2f} |"
+            f"{r.tokens_per_s:.1f} | {r.prompt_tokens_per_s:.1f} | {r.peak_vram_gb:.2f} |"
         )
     return "\n".join(lines)
 

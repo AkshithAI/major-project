@@ -431,9 +431,10 @@ def models() -> None:
 @click.option("--backend-path", default=None)
 @click.option("--runs", "-r", default=3, help="Number of timed iterations")
 @click.option("--tokens", "-t", default=128, help="Output tokens to generate")
+@click.option("--prompt", "-p", default=None, help="Custom prompt text")
 def benchmark(model_ref: str, context: int, draft: str | None,
               output: str, mode: str, backend_path: str | None,
-              runs: int, tokens: int) -> None:
+              runs: int, tokens: int, prompt: str | None) -> None:
     """Run the benchmark suite and save results.
 
     MODEL_REF can be a local path or HuggingFace repo ID.
@@ -486,11 +487,15 @@ def benchmark(model_ref: str, context: int, draft: str | None,
     adapter = LlamaCppAdapter(server_path)
     runner = BenchmarkRunner(adapter, warmup_runs=1, timed_runs=runs)
 
-    prompt = (
-        "Write a comprehensive explanation of how heterogeneous CPU and GPU "
-        "computing works for large language model inference, covering memory "
-        "management, layer placement, and speculative decoding."
-    )
+    if not prompt:
+        prompt = (
+            "Explain in technical detail the architectural principles of heterogeneous computing "
+            "for deep neural networks and large language model inference. Discuss the trade-offs between "
+            "memory bandwidth, compute capability, and PCIe interconnect latency when partitioning "
+            "transformer layers between a host CPU and an accelerator GPU. Include considerations "
+            "for key-value cache management, quantization precision (such as FP16 versus Q8_0), "
+            "and latency-throughput trade-offs in low-resource environments."
+        )
 
     results = []
     try:

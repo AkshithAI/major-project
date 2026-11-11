@@ -194,6 +194,24 @@ def _download_from_hf(
 
     console.print(f"[bold blue]Resolving model:[/bold blue] {repo_id}")
 
+    # Check local cache first before network calls
+    local_dir = cache_dir / repo_id.replace("/", "--")
+    if local_dir.exists():
+        cached_ggufs = [f.name for f in local_dir.glob("*.gguf")]
+        if cached_ggufs:
+            singles, split_groups = _group_split_files(cached_ggufs)
+            try:
+                target_file, is_split, split_shards = _select_gguf_file(
+                    singles, split_groups, quant_hint, interactive=False,
+                )
+                files_to_check = split_shards if is_split else [target_file]
+                if all((local_dir / f).exists() for f in files_to_check):
+                    shard1_path = local_dir / target_file
+                    console.print(f"[dim]Using cached file: {shard1_path}[/dim]")
+                    return str(shard1_path)
+            except Exception:
+                pass
+
     api = HfApi()
 
     # List all files in the repo to find GGUFs

@@ -83,11 +83,12 @@ class BenchmarkRunner:
             resp = self.adapter.generate(request)
             if resp.metrics:
                 metrics_list.append(resp.metrics)
+                pp_str = f" | PP={resp.metrics.prompt_tokens_per_s:.1f} tok/s" if resp.metrics.prompt_tokens_per_s > 0 else ""
                 console.print(
                     f"    Run {i + 1}/{self.timed_runs}: "
                     f"TTFT={resp.metrics.ttft_ms:.0f}ms | "
                     f"TPOT={resp.metrics.tpot_ms:.1f}ms | "
-                    f"tok/s={resp.metrics.output_tokens_per_s:.1f} | "
+                    f"tok/s={resp.metrics.output_tokens_per_s:.1f}{pp_str} | "
                     f"tokens={resp.metrics.total_output_tokens}"
                 )
             if i < self.timed_runs - 1:
@@ -175,6 +176,7 @@ class BenchmarkRunner:
         table.add_column("TPOT", justify="right")
         table.add_column("ITL P95", justify="right")
         table.add_column("Tokens/s", justify="right")
+        table.add_column("PP tok/s", justify="right")
         table.add_column("Peak VRAM", justify="right")
         table.add_column("Peak RAM", justify="right")
 
@@ -189,6 +191,7 @@ class BenchmarkRunner:
                 f"{m.tpot_ms:.1f} ms",
                 f"{m.itl_p95_ms:.1f} ms",
                 f"[bold green]{m.output_tokens_per_s:.1f}[/bold green]",
+                f"{m.prompt_tokens_per_s:.1f}" if m.prompt_tokens_per_s > 0 else "—",
                 f"{m.peak_vram_bytes / 1e9:.2f} GB" if m.peak_vram_bytes > 0 else "—",
                 f"{m.peak_ram_bytes / 1e9:.2f} GB" if m.peak_ram_bytes > 0 else "—",
             )

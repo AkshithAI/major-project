@@ -114,24 +114,36 @@ class PlanGenerator:
         """Enumerate the candidate configuration space."""
         candidates: list[RunPlan] = []
 
-        # Determine CPU threads
-        total_threads = hardware.cpu_logical_cores
-        target_threads = max(MIN_CPU_THREADS, total_threads - 2)  # Reserve 2 for OS
+        # Determine CPU threads: prefer physical cores to avoid hyperthread contention
+        if hardware.cpu_physical_cores > 0:
+            target_threads = max(MIN_CPU_THREADS, hardware.cpu_physical_cores)
+        else:
+            total_threads = hardware.cpu_logical_cores
+            target_threads = max(MIN_CPU_THREADS, total_threads - 2)  # Reserve 2 for OS
 
         # Context length
         context = workload.context_length
         if model.max_context > 0:
             context = min(context, model.max_context)
 
-        for frac in self.gpu_split_fractions:
-            gpu_layers = int(model.layer_count * frac)
+        for kv_type in self.kv_types:
+            for kv_offload in DEFAULT_KV_OFFLOAD:
+                layer_counts = set()
+                for frac in self.gpu_split_fractions:
+                    layer_counts.add(int(model.layer_count * frac))
 
-            # Skip GPU configs if no GPU
-            if gpu_layers > 0 and not hardware.has_gpu():
-                continue
+                if hardware.has_gpu():
+                    max_gpu = self.estimator.find_max_gpu_layers(
+                        hardware, model, context, kv_dtype=kv_type, kv_offload=kv_offload
+                    )
+                    if max_gpu > 0:
+                        layer_counts.add(max_gpu)
 
-            for kv_type in self.kv_types:
-                for kv_offload in DEFAULT_KV_OFFLOAD:
+                for gpu_layers in sorted(layer_counts, reverse=True):
+                    # Skip GPU configs if no GPU
+                    if gpu_layers > 0 and not hardware.has_gpu():
+                        continue
+
                     # Skip nonsensical combos
                     if self._should_skip(gpu_layers, kv_type, kv_offload, hardware):
                         continue
@@ -227,21 +239,21 @@ class PlanGenerator:
             gpu_fraction = plan.gpu_layers / model.layer_count
             score += (1.0 - gpu_fraction) * 100  # 0 = all GPU, 100 = all CPU
 
-        # Prefer KV on GPU (avoids offload traffic)
+        # Small penalty for KV offload to host RAM
         if plan.kv_offload:
-            score += 20
-
-        # Prefer native KV precision (quality)
-        if plan.kv_type_k != "f16":
             score += 10
+
+        # Small penalty for quantized KV (quality preservation)
+        if plan.kv_type_k != "f16":
+            score += 5
 
         # Prefer more headroom (safety)
         if est.vram_budget_bytes > 0:
             usage_ratio = est.vram_required_bytes / est.vram_budget_bytes
-            if usage_ratio > 0.95:
-                score += 30  # Penalize tight fits heavily
-            elif usage_ratio > 0.85:
+            if usage_ratio > 0.98:
                 score += 10
+            elif usage_ratio > 0.90:
+                score += 5
 
         # Small bonus for hybrid over pure CPU
         if plan.execution_mode == "cpu_first":

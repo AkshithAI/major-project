@@ -1,31 +1,7 @@
 - backend: llamacpp
   batch_size: 2048
   context_length: 8192
-  cpu_threads: 10
-  cpu_threads_draft: null
-  draft_device: none
-  draft_length: 0
-  draft_model_path: null
-  draft_threads: null
-  estimated_ram_bytes: 6845940472
-  estimated_vram_bytes: 4067355560
-  execution_mode: hybrid
-  gpu_layers: 12
-  kv_offload: false
-  kv_type_k: f16
-  kv_type_v: f16
-  memory_headroom_pct: 21.66566782400651
-  model_format: gguf
-  model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
-  plan_id: 1470888b
-  rationale: '12/48 layers on GPU (2.2 GB), remaining on CPU (6.7 GB); VRAM headroom:
-    1125 MB'
-  spec_type: none
-  ubatch_size: 512
-- backend: llamacpp
-  batch_size: 2048
-  context_length: 8192
-  cpu_threads: 10
+  cpu_threads: 8
   cpu_threads_draft: null
   draft_device: none
   draft_length: 0
@@ -38,42 +14,18 @@
   kv_offload: true
   kv_type_k: f16
   kv_type_v: f16
-  memory_headroom_pct: 9.408776459844658
+  memory_headroom_pct: 2.0717182724597416
   model_format: gguf
   model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
-  plan_id: '19937098'
+  plan_id: c888fe56
   rationale: '24/48 layers on GPU (4.5 GB), remaining on CPU (4.5 GB); KV cache offloaded
-    to RAM to free GPU memory; VRAM headroom: 489 MB'
+    to RAM to free GPU memory; VRAM headroom: 100 MB'
   spec_type: none
   ubatch_size: 512
 - backend: llamacpp
   batch_size: 2048
   context_length: 8192
-  cpu_threads: 10
-  cpu_threads_draft: null
-  draft_device: none
-  draft_length: 0
-  draft_model_path: null
-  draft_threads: null
-  estimated_ram_bytes: 6845940472
-  estimated_vram_bytes: 3262049192
-  execution_mode: hybrid
-  gpu_layers: 12
-  kv_offload: false
-  kv_type_k: q8_0
-  kv_type_v: q8_0
-  memory_headroom_pct: 37.17528718326283
-  model_format: gguf
-  model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
-  plan_id: 560f4f4e
-  rationale: '12/48 layers on GPU (2.2 GB), remaining on CPU (6.7 GB); q8_0 KV cache
-    saves ~403 MB vs FP16; VRAM headroom: 1930 MB'
-  spec_type: none
-  ubatch_size: 512
-- backend: llamacpp
-  batch_size: 2048
-  context_length: 8192
-  cpu_threads: 10
+  cpu_threads: 8
   cpu_threads_draft: null
   draft_device: none
   draft_length: 0
@@ -86,19 +38,115 @@
   kv_offload: true
   kv_type_k: q8_0
   kv_type_v: q8_0
-  memory_headroom_pct: 9.408776459844658
+  memory_headroom_pct: 2.0717182724597416
   model_format: gguf
   model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
-  plan_id: df5f0f90
+  plan_id: '40495625'
   rationale: '24/48 layers on GPU (4.5 GB), remaining on CPU (4.5 GB); q8_0 KV cache
     saves ~403 MB vs FP16; KV cache offloaded to RAM to free GPU memory; VRAM headroom:
-    489 MB'
+    100 MB'
   spec_type: none
   ubatch_size: 512
 - backend: llamacpp
   batch_size: 2048
   context_length: 8192
-  cpu_threads: 10
+  cpu_threads: 8
+  cpu_threads_draft: null
+  draft_device: none
+  draft_length: 0
+  draft_model_path: null
+  draft_threads: null
+  estimated_ram_bytes: 5347922056
+  estimated_vram_bytes: 4760067608
+  execution_mode: hybrid
+  gpu_layers: 20
+  kv_offload: false
+  kv_type_k: q8_0
+  kv_type_v: q8_0
+  memory_headroom_pct: 0.899661896433883
+  model_format: gguf
+  model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
+  plan_id: 60796c35
+  rationale: '20/48 layers on GPU (3.7 GB), remaining on CPU (5.2 GB); q8_0 KV cache
+    saves ~403 MB vs FP16; VRAM headroom: 43 MB'
+  spec_type: none
+  ubatch_size: 512
+- backend: llamacpp
+  batch_size: 2048
+  context_length: 8192
+  cpu_threads: 8
+  cpu_threads_draft: null
+  draft_device: none
+  draft_length: 0
+  draft_model_path: null
+  draft_threads: null
+  estimated_ram_bytes: 6284183566
+  estimated_vram_bytes: 4629112466
+  execution_mode: hybrid
+  gpu_layers: 15
+  kv_offload: false
+  kv_type_k: f16
+  kv_type_v: f16
+  memory_headroom_pct: 3.626030493970095
+  model_format: gguf
+  model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
+  plan_id: 1cb28a80
+  rationale: '15/48 layers on GPU (2.8 GB), remaining on CPU (6.2 GB); VRAM headroom:
+    174 MB'
+  spec_type: none
+  ubatch_size: 512
+- backend: llamacpp
+  batch_size: 2048
+  context_length: 8192
+  cpu_threads: 8
+  cpu_threads_draft: null
+  draft_device: none
+  draft_length: 0
+  draft_model_path: null
+  draft_threads: null
+  estimated_ram_bytes: 6845940472
+  estimated_vram_bytes: 4067355560
+  execution_mode: hybrid
+  gpu_layers: 12
+  kv_offload: false
+  kv_type_k: f16
+  kv_type_v: f16
+  memory_headroom_pct: 15.321305414656308
+  model_format: gguf
+  model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
+  plan_id: f619c90f
+  rationale: '12/48 layers on GPU (2.2 GB), remaining on CPU (6.7 GB); VRAM headroom:
+    736 MB'
+  spec_type: none
+  ubatch_size: 512
+- backend: llamacpp
+  batch_size: 2048
+  context_length: 8192
+  cpu_threads: 8
+  cpu_threads_draft: null
+  draft_device: none
+  draft_length: 0
+  draft_model_path: null
+  draft_threads: null
+  estimated_ram_bytes: 6845940472
+  estimated_vram_bytes: 3262049192
+  execution_mode: hybrid
+  gpu_layers: 12
+  kv_offload: false
+  kv_type_k: q8_0
+  kv_type_v: q8_0
+  memory_headroom_pct: 32.087061684930454
+  model_format: gguf
+  model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
+  plan_id: 5287e85e
+  rationale: '12/48 layers on GPU (2.2 GB), remaining on CPU (6.7 GB); q8_0 KV cache
+    saves ~403 MB vs FP16; VRAM headroom: 1541 MB'
+  spec_type: none
+  ubatch_size: 512
+- backend: llamacpp
+  batch_size: 2048
+  context_length: 8192
+  cpu_threads: 8
   cpu_threads_draft: null
   draft_device: none
   draft_length: 0
@@ -111,18 +159,18 @@
   kv_offload: true
   kv_type_k: f16
   kv_type_v: f16
-  memory_headroom_pct: 52.68490654251916
+  memory_headroom_pct: 48.85281795520459
   model_format: gguf
   model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
-  plan_id: 1879da39
+  plan_id: 24c00d99
   rationale: '12/48 layers on GPU (2.2 GB), remaining on CPU (6.7 GB); KV cache offloaded
-    to RAM to free GPU memory; VRAM headroom: 2736 MB'
+    to RAM to free GPU memory; VRAM headroom: 2347 MB'
   spec_type: none
   ubatch_size: 512
 - backend: llamacpp
   batch_size: 2048
   context_length: 8192
-  cpu_threads: 10
+  cpu_threads: 8
   cpu_threads_draft: null
   draft_device: none
   draft_length: 0
@@ -135,19 +183,19 @@
   kv_offload: true
   kv_type_k: q8_0
   kv_type_v: q8_0
-  memory_headroom_pct: 52.68490654251916
+  memory_headroom_pct: 48.85281795520459
   model_format: gguf
   model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
-  plan_id: b1887e92
+  plan_id: 596bd22d
   rationale: '12/48 layers on GPU (2.2 GB), remaining on CPU (6.7 GB); q8_0 KV cache
     saves ~403 MB vs FP16; KV cache offloaded to RAM to free GPU memory; VRAM headroom:
-    2736 MB'
+    2347 MB'
   spec_type: none
   ubatch_size: 512
 - backend: llamacpp
   batch_size: 2048
   context_length: 8192
-  cpu_threads: 10
+  cpu_threads: 8
   cpu_threads_draft: null
   draft_device: none
   draft_length: 0
@@ -160,18 +208,18 @@
   kv_offload: true
   kv_type_k: f16
   kv_type_v: f16
-  memory_headroom_pct: 98.0958784694433
+  memory_headroom_pct: 97.95114111835682
   model_format: gguf
   model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
-  plan_id: 3972f6dd
+  plan_id: 5b76a60d
   rationale: 'Model weights (9.0 GB) exceed GPU budget; running on CPU; KV cache offloaded
-    to RAM to free GPU memory; VRAM headroom: 5402 MB'
+    to RAM to free GPU memory; VRAM headroom: 5013 MB'
   spec_type: none
   ubatch_size: 512
 - backend: llamacpp
   batch_size: 2048
   context_length: 8192
-  cpu_threads: 10
+  cpu_threads: 8
   cpu_threads_draft: null
   draft_device: none
   draft_length: 0
@@ -184,12 +232,12 @@
   kv_offload: true
   kv_type_k: q8_0
   kv_type_v: q8_0
-  memory_headroom_pct: 98.0958784694433
+  memory_headroom_pct: 97.95114111835682
   model_format: gguf
   model_path: C:\Users\rakhi\.adhie\models\Qwen--Qwen2.5-14B-Instruct-GGUF\qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf
-  plan_id: 81465ac9
+  plan_id: eabaa6ac
   rationale: 'Model weights (9.0 GB) exceed GPU budget; running on CPU; q8_0 KV cache
     saves ~403 MB vs FP16; KV cache offloaded to RAM to free GPU memory; VRAM headroom:
-    5402 MB'
+    5013 MB'
   spec_type: none
   ubatch_size: 512

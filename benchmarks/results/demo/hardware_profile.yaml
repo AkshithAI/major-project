@@ -3,7 +3,7 @@ gpu_compute_capability:
 - 8
 - 6
 vram_total_bytes: 6442450944
-vram_free_bytes: 5983260672
+vram_free_bytes: 5729239040
 gpu_count: 1
 cpu_model: Intel64 Family 6 Model 186 Stepping 2, GenuineIntel
 cpu_physical_cores: 8
@@ -11,14 +11,14 @@ cpu_logical_cores: 12
 cpu_freq_mhz: 2100.0
 simd_flags: []
 ram_total_bytes: 25460154368
-ram_available_bytes: 17172275200
+ram_available_bytes: 13417234432
 h2d_bandwidth_bytes_s: 6400000000.0
 d2h_bandwidth_bytes_s: 6400000000.0
-ram_bandwidth_bytes_s: 28341387775.024437
+ram_bandwidth_bytes_s: 28726418461.15845
 gpu_mem_bandwidth_bytes_s: null
 pcie_gen: 1
 pcie_width: 8
-storage_type: unknown
+storage_type: ssd
 storage_read_mbps: null
 cuda_version: '13.4'
 driver_version: '617.42'

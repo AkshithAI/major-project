@@ -173,6 +173,8 @@ class LlamaCppAdapter(RuntimeAdapter):
             "seed": request.seed,
             "stream": request.stream,
         }
+        if request.stream:
+            payload["stream_options"] = {"include_usage": True}
         if request.stop:
             payload["stop"] = request.stop
 
@@ -238,6 +240,14 @@ class LlamaCppAdapter(RuntimeAdapter):
                     except json.JSONDecodeError:
                         continue
 
+                    # Check for usage object (sent in final chunk with choices=[])
+                    usage = data.get("usage")
+                    if usage:
+                        pt = usage.get("prompt_tokens")
+                        if pt is not None and pt > 0:
+                            prompt_tokens = pt
+                            collector._prompt_tokens = prompt_tokens
+
                     # Extract token content
                     choices = data.get("choices", [])
                     if not choices:
@@ -252,20 +262,12 @@ class LlamaCppAdapter(RuntimeAdapter):
 
                         if token_count == 1:
                             collector.record_first_token()
-                            # Extract prompt tokens from first chunk's usage
-                            usage = data.get("usage", {})
-                            prompt_tokens = usage.get("prompt_tokens", 0)
                         else:
                             collector.record_token()
 
                     fr = choices[0].get("finish_reason")
                     if fr:
                         finish_reason = fr
-
-                    # Try to get final usage stats
-                    usage = data.get("usage")
-                    if usage:
-                        prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
 
         except requests.exceptions.Timeout:
             finish_reason = "error"
@@ -339,6 +341,10 @@ class LlamaCppAdapter(RuntimeAdapter):
             args.extend(["--cache-type-k", plan.kv_type_k])
         if plan.kv_type_v and plan.kv_type_v != "f16":
             args.extend(["--cache-type-v", plan.kv_type_v])
+
+        # KV cache offload (in ADHIE, kv_offload=True means offload to RAM/CPU)
+        if plan.kv_offload:
+            args.append("--no-kv-offload")
 
         # Speculative decoding
         if plan.draft_model_path and plan.draft_device != "none" and plan.spec_type != "none":

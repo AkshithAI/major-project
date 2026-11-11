@@ -26,6 +26,13 @@ param(
 $ErrorActionPreference = "Stop"
 $ResultsDir = "benchmarks\results\demo"
 
+# Ensure output directory exists and clean prior demo runs for fresh comparison
+if (Test-Path $ResultsDir) {
+    Get-ChildItem -Path $ResultsDir -Filter "run-*.json" -ErrorAction SilentlyContinue | Remove-Item -Force
+} else {
+    New-Item -ItemType Directory -Path $ResultsDir -Force | Out-Null
+}
+
 # Auto-detect project virtual environment if adhie is not in PATH
 if (-not (Get-Command adhie -ErrorAction SilentlyContinue)) {
     $venvScripts = Join-Path $PSScriptRoot "..\.venv\Scripts"
